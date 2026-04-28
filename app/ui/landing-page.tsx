@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   FormEvent,
   startTransition,
@@ -525,14 +526,9 @@ export function LandingPage() {
           <a className="nav-link" href="#waitlist">
             Join waitlist
           </a>
-          <a
-            className="nav-link nav-social"
-            href="https://x.com/otpay1"
-            target="_blank"
-            rel="noreferrer"
-          >
-            X @otpay1
-          </a>
+          <Link className="nav-link nav-social" href="/link-phone">
+            Start
+          </Link>
         </div>
       </header>
 
@@ -553,6 +549,14 @@ export function LandingPage() {
             <span className="hero-chip">Phone-first identity</span>
             <span className="hero-chip">Stablecoin settlement</span>
             <span className="hero-chip">Fast, low-cost rails</span>
+          </div>
+          <div className="hero-actions js-hero-copy">
+            <Link className="hero-primary-link" href="/link-phone">
+              Register phone number
+            </Link>
+            <a className="hero-secondary-link" href="#waitlist">
+              Join waitlist
+            </a>
           </div>
         </div>
 

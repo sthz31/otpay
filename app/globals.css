@@ -48,12 +48,16 @@ a {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
 a:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgba(0, 214, 79, 0.28);
@@ -244,6 +248,42 @@ a:focus-visible {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 32px;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.hero-primary-link,
+.hero-secondary-link {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, transform 100ms ease-out;
+}
+
+.hero-primary-link {
+  background: linear-gradient(180deg, #00e95a 0%, #00c84b 100%);
+  color: #051106;
+}
+
+.hero-primary-link:hover,
+.hero-secondary-link:hover {
+  transform: translateY(-1px);
+}
+
+.hero-secondary-link {
+  border: 1px solid rgba(6, 28, 10, 0.12);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--foreground);
 }
 
 .hero-chip,
@@ -898,6 +938,15 @@ a:focus-visible {
 
   .hero-copy {
     padding: 28px 22px 32px;
+  }
+
+  .hero-actions {
+    display: grid;
+  }
+
+  .hero-primary-link,
+  .hero-secondary-link {
+    width: 100%;
   }
 
   .hero-panel {
