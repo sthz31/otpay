@@ -21,8 +21,15 @@ export const phoneLinkPinSchema = z.object({
   pin: z.string().regex(/^\d{4}$/, "PIN must be exactly 4 digits."),
 });
 
+export const loginSchema = z.object({
+  phoneNumber: z
+    .string()
+    .trim()
+    .regex(/^\+?[0-9\s\-()]{7,20}$/, "Enter a valid phone number."),
+  pin: z.string().regex(/^\d{4}$/, "PIN must be exactly 4 digits."),
+});
+
 export const paymentIntentSchema = z.object({
-  senderProfileId: z.string().min(1, "senderProfileId is required"),
   recipientPhoneNumber: z
     .string()
     .regex(/^\+?[0-9\s\-()]{7,20}$/, "Enter a valid phone number."),
@@ -32,8 +39,11 @@ export const paymentIntentSchema = z.object({
 });
 
 export const paymentIntentDecisionSchema = z.object({
-  profileId: z.string().min(1, "profileId is required"),
   action: z.enum(["approve", "reject"]),
+});
+
+export const paymentIntentConfirmSchema = z.object({
+  otp: z.string().regex(/^\d{4}$/, "OTP must be exactly 4 digits."),
 });
 
 export const settlementSchema = z.object({

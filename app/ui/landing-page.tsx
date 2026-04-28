@@ -13,6 +13,7 @@ import {
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { ACTIVE_PROFILE_STORAGE_KEY } from "@/lib/auth/session";
 
 const steps = [
   {
@@ -460,6 +461,27 @@ function CelebrationModal({
 export function LandingPage() {
   const rootRef = useRef<HTMLElement>(null);
   const [celebrationOpen, setCelebrationOpen] = useState(false);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    return window.localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
+  });
+
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key === ACTIVE_PROFILE_STORAGE_KEY) {
+        setActiveProfileId(event.newValue);
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -526,8 +548,11 @@ export function LandingPage() {
           <a className="nav-link" href="#waitlist">
             Join waitlist
           </a>
-          <Link className="nav-link nav-social" href="/link-phone">
-            Start
+          <Link
+            className="nav-link nav-social"
+            href={activeProfileId ? `/dashboard?profileId=${activeProfileId}` : "/link-phone"}
+          >
+            {activeProfileId ? "Dashboard" : "Start"}
           </Link>
         </div>
       </header>

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getActiveProfileId } from "@/lib/auth/session-server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { paymentIntentDecisionSchema } from "@/lib/validation/payment-intent";
 
@@ -20,6 +21,12 @@ export async function POST(
     );
   }
 
+  const activeProfileId = await getActiveProfileId();
+
+  if (!activeProfileId) {
+    return NextResponse.json({ error: "You must be logged in to approve requests." }, { status: 401 });
+  }
+
   const supabase = getSupabaseServerClient();
   const { data: paymentIntent, error: lookupError } = await supabase
     .from("payment_intents")
@@ -35,7 +42,7 @@ export async function POST(
     return NextResponse.json({ error: "Payment intent not found." }, { status: 404 });
   }
 
-  if (paymentIntent.recipient_profile_id !== parsed.data.profileId) {
+  if (paymentIntent.recipient_profile_id !== activeProfileId) {
     return NextResponse.json(
       { error: "Only the intended recipient can approve this request." },
       { status: 403 },

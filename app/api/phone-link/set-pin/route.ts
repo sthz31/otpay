@@ -1,14 +1,7 @@
-import { randomBytes, scryptSync } from "node:crypto";
 import { NextResponse } from "next/server";
+import { hashPin } from "@/lib/auth/pin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { phoneLinkPinSchema } from "@/lib/validation/payment-intent";
-
-function hashPin(pin: string) {
-  const salt = randomBytes(16).toString("hex");
-  const derivedKey = scryptSync(pin, salt, 64).toString("hex");
-
-  return `${salt}:${derivedKey}`;
-}
 
 export async function POST(request: Request) {
   const body = await request.json();

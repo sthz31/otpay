@@ -5,7 +5,6 @@ import { useState } from "react";
 
 type ApproveIntentActionsProps = {
   intentId: string;
-  recipientProfileId: string;
 };
 
 type DecisionResponse = {
@@ -16,7 +15,6 @@ type DecisionResponse = {
 
 export function ApproveIntentActions({
   intentId,
-  recipientProfileId,
 }: ApproveIntentActionsProps) {
   const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState("");
@@ -32,9 +30,7 @@ export function ApproveIntentActions({
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        profileId: recipientProfileId,
-      }),
+      body: JSON.stringify({}),
     });
 
     const payload = (await response.json()) as DecisionResponse;
@@ -61,12 +57,12 @@ export function ApproveIntentActions({
         <div className="mt-5 flex flex-wrap gap-3">
           <Link
             href={`/status/${intentId}`}
-            className="inline-flex min-h-11 items-center justify-center rounded-full bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800"
+            className="primary-dark-button inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition"
           >
             View status
           </Link>
           <Link
-            href={`/dashboard?profileId=${recipientProfileId}`}
+            href="/dashboard"
             className="inline-flex min-h-11 items-center justify-center rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50"
           >
             Back to dashboard

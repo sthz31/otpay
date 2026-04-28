@@ -163,6 +163,26 @@ a:focus-visible {
   background: rgba(0, 214, 79, 0.1);
 }
 
+.dashboard-review-button {
+  background: #0f172a;
+  color: #ffffff !important;
+}
+
+.dashboard-review-button:hover {
+  background: #1f2937;
+  color: #ffffff !important;
+}
+
+.primary-dark-button {
+  background: #0f172a;
+  color: #ffffff !important;
+}
+
+.primary-dark-button:hover {
+  background: #1f2937;
+  color: #ffffff !important;
+}
+
 .hero-section {
   display: grid;
   grid-template-columns: minmax(0, 1.03fr) minmax(360px, 0.97fr);

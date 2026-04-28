@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
+import { ACTIVE_PROFILE_COOKIE, ACTIVE_PROFILE_STORAGE_KEY } from "@/lib/auth/session";
 
 type FormState = {
   displayName: string;
@@ -145,6 +146,8 @@ export function LinkPhoneForm() {
     }
 
     setPendingProfile(payload.data.profile);
+    window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, payload.data.profile.id);
+    document.cookie = `${ACTIVE_PROFILE_COOKIE}=${payload.data.profile.id}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
     setForm(initialState);
     setOtp("");
     setPin("");
@@ -326,7 +329,7 @@ export function LinkPhoneForm() {
           <div className="mt-5 flex flex-wrap gap-3">
             <Link
               href={`/dashboard?profileId=${pendingProfile.id}`}
-              className="inline-flex min-h-11 items-center justify-center rounded-full bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800"
+              className="primary-dark-button inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition"
             >
               Open dashboard
             </Link>

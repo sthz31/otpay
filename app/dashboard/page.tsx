@@ -1,9 +1,11 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
+import { getActiveProfileId } from "@/lib/auth/session-server";
 import {
   getProfileById,
-  getProfilesForDashboard,
   getRecentPaymentIntents,
 } from "@/lib/supabase/otpay-queries";
+import { LogoutButton } from "./logout-button";
 
 function formatAmount(amount: number) {
   return new Intl.NumberFormat("en-US", {
@@ -21,18 +23,19 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ profileId?: string }>;
-}) {
-  const { profileId } = await searchParams;
-  const profiles = await getProfilesForDashboard();
-  const selectedProfile =
-    (await getProfileById(profileId)) ??
-    profiles.find((profile) => profile.is_verified && profile.pin_set_at) ??
-    profiles[0] ??
-    null;
+export default async function DashboardPage() {
+  const activeProfileCookie = await getActiveProfileId();
+
+  if (!activeProfileCookie) {
+    redirect("/login");
+  }
+
+  const selectedProfile = await getProfileById(activeProfileCookie);
+
+  if (!selectedProfile) {
+    redirect("/login");
+  }
+
   const recentIntents = selectedProfile
     ? await getRecentPaymentIntents(selectedProfile.id)
     : [];
@@ -50,11 +53,12 @@ export default async function DashboardPage({
           ← Back to landing
         </Link>
         <Link
-          href={selectedProfile ? `/request-payment?profileId=${selectedProfile.id}` : "/request-payment"}
-          className="inline-flex w-fit items-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+          href="/request-payment"
+          className="primary-dark-button inline-flex w-fit items-center rounded-full px-4 py-2 text-sm font-semibold transition"
         >
           Request payment
         </Link>
+        <LogoutButton />
       </div>
 
       <section className="rounded-[32px] border border-black/10 bg-white/90 p-8 shadow-[0_24px_64px_rgba(8,17,9,0.08)]">
@@ -65,36 +69,10 @@ export default async function DashboardPage({
               OTPay request dashboard
             </h1>
             <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
-              Switch between registered demo profiles, review live payment intents,
-              and jump into approval or request creation from one place.
+              Review your live payment intents, track pending approvals, and jump into
+              request creation from one place.
             </p>
           </div>
-
-          <form className="grid gap-2">
-            <label className="text-sm font-semibold text-zinc-900" htmlFor="profileId">
-              Active profile
-            </label>
-            <div className="flex flex-wrap gap-3">
-              <select
-                id="profileId"
-                name="profileId"
-                defaultValue={selectedProfile?.id ?? ""}
-                className="min-h-13 min-w-72 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-base font-normal text-zinc-900 outline-none transition focus:border-lime-500"
-              >
-                {profiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.display_name} · {profile.phone_number ?? "No phone"}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="submit"
-                className="min-h-13 rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50"
-              >
-                Switch
-              </button>
-            </div>
-          </form>
         </div>
       </section>
 
@@ -140,7 +118,7 @@ export default async function DashboardPage({
                   </h2>
                 </div>
                 <Link
-                  href={`/request-payment?profileId=${selectedProfile.id}`}
+                  href="/request-payment"
                   className="inline-flex min-h-11 items-center justify-center rounded-full bg-lime-500 px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-lime-400"
                 >
                   Create a new request
@@ -170,9 +148,9 @@ export default async function DashboardPage({
                         </div>
                         <Link
                           href={`/approve/${intent.id}`}
-                          className="inline-flex min-h-11 items-center justify-center rounded-full bg-zinc-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+                          className="dashboard-review-button inline-flex min-h-11 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold text-white transition"
                         >
-                          Review
+                          Review request
                         </Link>
                       </div>
                     </div>
@@ -224,7 +202,11 @@ export default async function DashboardPage({
                                 ? `/approve/${intent.id}`
                                 : `/status/${intent.id}`
                             }
-                            className="inline-flex min-h-11 items-center justify-center rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
+                            className={
+                              intent.status === "pending" && !isOutgoing
+                                ? "dashboard-review-button inline-flex min-h-11 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold text-white transition"
+                                : "inline-flex min-h-11 items-center justify-center rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
+                            }
                           >
                             {intent.status === "pending" && !isOutgoing ? "Open approval" : "View status"}
                           </Link>
@@ -262,7 +244,7 @@ export default async function DashboardPage({
           <div className="mt-6">
             <Link
               href="/link-phone"
-              className="inline-flex min-h-11 items-center justify-center rounded-full bg-zinc-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800"
+              className="primary-dark-button inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition"
             >
               Register first profile
             </Link>

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getActiveProfileId } from "@/lib/auth/session-server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { paymentIntentSchema } from "@/lib/validation/payment-intent";
 
@@ -16,6 +17,12 @@ export async function POST(request: Request) {
     );
   }
 
+  const activeProfileId = await getActiveProfileId();
+
+  if (!activeProfileId) {
+    return NextResponse.json({ error: "You must be logged in to create a request." }, { status: 401 });
+  }
+
   const supabase = getSupabaseServerClient();
   const amount = Number(parsed.data.amount);
 
@@ -29,7 +36,7 @@ export async function POST(request: Request) {
   const { data: senderProfile, error: senderProfileError } = await supabase
     .from("profiles")
     .select("id, display_name")
-    .eq("id", parsed.data.senderProfileId)
+    .eq("id", activeProfileId)
     .maybeSingle();
 
   if (senderProfileError) {
@@ -59,23 +66,27 @@ export async function POST(request: Request) {
     );
   }
 
-  if (recipientPhoneLink.profile_id === parsed.data.senderProfileId) {
+  if (recipientPhoneLink.profile_id === activeProfileId) {
     return NextResponse.json(
       { error: "Choose a different phone number for the recipient." },
       { status: 400 },
     );
   }
 
+  const approvalOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
   const { data: paymentIntent, error: paymentIntentError } = await supabase
     .from("payment_intents")
     .insert({
-      sender_profile_id: parsed.data.senderProfileId,
+      sender_profile_id: activeProfileId,
       recipient_profile_id: recipientPhoneLink.profile_id,
       recipient_phone_number: recipientPhoneLink.phone_number,
       amount,
       currency: parsed.data.currency,
       note: parsed.data.note?.trim() || null,
       status: "pending",
+      approval_otp: approvalOtp,
+      approval_otp_sent_at: new Date().toISOString(),
     })
     .select(
       "id, sender_profile_id, recipient_profile_id, recipient_phone_number, amount, currency, note, status, transaction_signature, created_at, updated_at",
@@ -88,6 +99,10 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+
+  console.log(
+    `[OTPay] Request OTP ${approvalOtp} sent to ${recipientPhoneLink.phone_number} for payment intent ${paymentIntent.id}`,
+  );
 
   return NextResponse.json({
     ok: true,
