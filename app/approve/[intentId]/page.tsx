@@ -57,7 +57,7 @@ export default async function ApproveIntentPage({
     );
   }
 
-  if (intent.recipient_profile_id !== activeProfileId) {
+  if (intent.sender_profile_id !== activeProfileId) {
     redirect("/dashboard");
   }
 
@@ -82,32 +82,32 @@ export default async function ApproveIntentPage({
         <div className="rounded-[32px] border border-black/10 bg-white/90 p-8 shadow-[0_24px_64px_rgba(8,17,9,0.08)]">
           <p className="text-sm uppercase tracking-[0.18em] text-zinc-500">Approval</p>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-950">
-            Review payment request
+            Pay request
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
-            The recipient sees who asked for payment, why, and for how much before
-            deciding whether to approve or reject the request.
+            Review who requested payment, confirm the OTP sent to your phone, then
+            sign and send USDC from your Solana wallet.
           </p>
 
           <div className="mt-8 grid gap-4 md:grid-cols-2">
             <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-              <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Sender</p>
+              <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Payer</p>
               <p className="mt-3 text-xl font-semibold text-zinc-950">
                 {intent.sender_display_name ?? "Unknown sender"}
               </p>
               <p className="mt-2 font-mono text-xs text-zinc-500">
-                {intent.sender_phone_number ?? "No phone"} · {intent.sender_wallet_address}
+                {intent.payer_phone_number ?? intent.sender_phone_number ?? "No phone"} ·{" "}
+                {intent.sender_wallet_address}
               </p>
             </div>
 
             <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-              <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Recipient</p>
+              <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Requester</p>
               <p className="mt-3 text-xl font-semibold text-zinc-950">
                 {intent.recipient_display_name ?? "Unknown recipient"}
               </p>
               <p className="mt-2 font-mono text-xs text-zinc-500">
-                {intent.resolved_recipient_phone_number ?? intent.recipient_phone_number} ·{" "}
-                {intent.recipient_wallet_address}
+                {intent.resolved_recipient_phone_number ?? "No phone"} · {intent.recipient_wallet_address}
               </p>
             </div>
           </div>
@@ -134,8 +134,13 @@ export default async function ApproveIntentPage({
           </div>
         </div>
 
-        {intent.status === "pending" ? (
-          <ApproveIntentActions intentId={intent.id} />
+        {intent.status === "pending" || intent.status === "approved" ? (
+          <ApproveIntentActions
+            initialApprovalMethod={intent.approval_method}
+            initialStatus={intent.status}
+            intentId={intent.id}
+            payerWalletAddress={intent.sender_wallet_address}
+          />
         ) : (
           <div className="rounded-[28px] border border-lime-200 bg-lime-50 p-6 text-sm text-lime-950">
             <p className="font-semibold">This request is already {intent.status}.</p>

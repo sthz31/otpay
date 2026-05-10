@@ -20,9 +20,9 @@ function formatDate(value: string) {
 }
 
 const statusCopy: Record<string, string> = {
-  pending: "Waiting for the recipient to review and approve the request.",
-  approved: "Recipient approved the request. The next MVP step is Solana settlement.",
-  rejected: "Recipient rejected the request. No funds should move.",
+  pending: "Waiting for the payer to verify the OTP and approve the request.",
+  approved: "Payer approved the request. They still need to sign and send the Solana transfer.",
+  rejected: "Payer rejected the request. No funds should move.",
   settling: "Settlement has been prepared and is waiting to be signed and sent.",
   settled: "Settlement completed and this request is finished.",
   failed: "Settlement failed and needs a retry path.",
@@ -98,7 +98,7 @@ export default async function StatusPage({
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
           This page gives judges the quick proof they need: who requested payment,
-          who received it, the approval state, and whether on-chain settlement still
+          who pays it, who receives it, the approval state, and whether on-chain settlement still
           needs to happen.
         </p>
 
@@ -129,23 +129,23 @@ export default async function StatusPage({
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Requested by</p>
+            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Payer</p>
             <p className="mt-3 text-xl font-semibold text-zinc-950">
               {intent.sender_display_name ?? "Unknown sender"}
             </p>
             <p className="mt-2 font-mono text-xs text-zinc-500">
-              {intent.sender_phone_number ?? "No phone"} · {intent.sender_wallet_address}
+              {intent.payer_phone_number ?? intent.sender_phone_number ?? "No phone"} ·{" "}
+              {intent.sender_wallet_address}
             </p>
           </div>
 
           <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Requested from</p>
+            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Requester / Payee</p>
             <p className="mt-3 text-xl font-semibold text-zinc-950">
               {intent.recipient_display_name ?? "Unknown recipient"}
             </p>
             <p className="mt-2 font-mono text-xs text-zinc-500">
-              {intent.resolved_recipient_phone_number ?? intent.recipient_phone_number} ·{" "}
-              {intent.recipient_wallet_address}
+              {intent.resolved_recipient_phone_number ?? "No phone"} · {intent.recipient_wallet_address}
             </p>
           </div>
         </div>
@@ -153,9 +153,8 @@ export default async function StatusPage({
         <div className="mt-6 rounded-[28px] border border-lime-200 bg-lime-50 p-5 text-sm text-lime-950">
           <p className="font-semibold">Next build step</p>
           <p className="mt-2">
-            Once a request reaches <span className="font-semibold">approved</span>, the
-            next implementation is to call the settlement route, sign the transfer, and
-            save the Solana transaction signature back into this record.
+            Once a request reaches <span className="font-semibold">approved</span>, the payer signs
+            from the approval page and OTPay records the devnet Solana signature here.
           </p>
         </div>
       </section>

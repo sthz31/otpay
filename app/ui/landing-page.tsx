@@ -10,10 +10,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ACTIVE_PROFILE_STORAGE_KEY } from "@/lib/auth/session";
 
 const steps = [
   {
@@ -459,29 +459,9 @@ function CelebrationModal({
 }
 
 export function LandingPage() {
+  const { authenticated, ready } = usePrivy();
   const rootRef = useRef<HTMLElement>(null);
   const [celebrationOpen, setCelebrationOpen] = useState(false);
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    return window.localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
-  });
-
-  useEffect(() => {
-    function handleStorage(event: StorageEvent) {
-      if (event.key === ACTIVE_PROFILE_STORAGE_KEY) {
-        setActiveProfileId(event.newValue);
-      }
-    }
-
-    window.addEventListener("storage", handleStorage);
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-    };
-  }, []);
 
   useLayoutEffect(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -550,9 +530,9 @@ export function LandingPage() {
           </a>
           <Link
             className="nav-link nav-social"
-            href={activeProfileId ? `/dashboard?profileId=${activeProfileId}` : "/link-phone"}
+            href={ready && authenticated ? "/dashboard" : "/link-phone"}
           >
-            {activeProfileId ? "Dashboard" : "Start"}
+            {ready && authenticated ? "Dashboard" : "Start"}
           </Link>
         </div>
       </header>
@@ -576,8 +556,11 @@ export function LandingPage() {
             <span className="hero-chip">Fast, low-cost rails</span>
           </div>
           <div className="hero-actions js-hero-copy">
-            <Link className="hero-primary-link" href="/link-phone">
-              Register phone number
+            <Link
+              className="hero-primary-link"
+              href={ready && authenticated ? "/dashboard" : "/link-phone"}
+            >
+              {ready && authenticated ? "Open dashboard" : "Register phone number"}
             </Link>
             <a className="hero-secondary-link" href="#waitlist">
               Join waitlist

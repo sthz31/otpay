@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { OTPayPrivyProvider } from "./privy-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -31,7 +32,9 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/otpay.png" />
         <meta name="theme-color" content="#A3E16C" />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <OTPayPrivyProvider>{children}</OTPayPrivyProvider>
+      </body>
     </html>
   );
 }

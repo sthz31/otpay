@@ -11,7 +11,7 @@ export async function GET(
   const { data: paymentIntent, error } = await supabase
     .from("payment_intents")
     .select(
-      "id, sender_profile_id, recipient_profile_id, recipient_phone_number, amount, currency, note, status, transaction_signature, created_at, updated_at",
+      "id, sender_profile_id, recipient_profile_id, recipient_phone_number, payer_phone_number, amount, currency, note, status, transaction_signature, approval_method, approved_by_profile_id, created_at, updated_at",
     )
     .eq("id", intentId)
     .maybeSingle();

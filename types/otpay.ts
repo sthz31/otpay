@@ -27,6 +27,9 @@ export type PaymentIntent = {
   senderProfileId: string;
   recipientProfileId: string;
   recipientPhoneNumber: string;
+  payerPhoneNumber?: string | null;
+  approvalMethod?: "payer_link" | "shared_otp" | null;
+  approvedByProfileId?: string | null;
   amount: string;
   currency: "USDC";
   note?: string;

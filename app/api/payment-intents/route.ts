@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import { createOtp, hashPaymentOtp } from "@/lib/auth/otp";
 import { getActiveProfileId } from "@/lib/auth/session-server";
+import { sendPaymentOtpSms } from "@/lib/sms/twilio";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { paymentIntentSchema } from "@/lib/validation/payment-intent";
 
@@ -33,63 +36,72 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: senderProfile, error: senderProfileError } = await supabase
+  const { data: requesterProfile, error: requesterProfileError } = await supabase
     .from("profiles")
-    .select("id, display_name")
+    .select("id, display_name, wallet_address")
     .eq("id", activeProfileId)
     .maybeSingle();
 
-  if (senderProfileError) {
-    return NextResponse.json({ error: senderProfileError.message }, { status: 500 });
+  if (requesterProfileError) {
+    return NextResponse.json({ error: requesterProfileError.message }, { status: 500 });
   }
 
-  if (!senderProfile) {
-    return NextResponse.json({ error: "Sender profile not found." }, { status: 404 });
+  if (!requesterProfile) {
+    return NextResponse.json({ error: "Requester profile not found." }, { status: 404 });
   }
 
   const normalizedPhoneNumber = parsed.data.recipientPhoneNumber.trim();
-  const { data: recipientPhoneLink, error: recipientLookupError } = await supabase
+  const { data: payerPhoneLink, error: payerLookupError } = await supabase
     .from("phone_links")
     .select("profile_id, phone_number, is_verified")
     .eq("phone_number", normalizedPhoneNumber)
     .eq("is_verified", true)
     .maybeSingle();
 
-  if (recipientLookupError) {
-    return NextResponse.json({ error: recipientLookupError.message }, { status: 500 });
+  if (payerLookupError) {
+    return NextResponse.json({ error: payerLookupError.message }, { status: 500 });
   }
 
-  if (!recipientPhoneLink) {
+  if (!payerPhoneLink) {
     return NextResponse.json(
-      { error: "Recipient phone number is not registered in OTPay yet." },
+      { error: "Payer phone number is not registered in OTPay yet." },
       { status: 404 },
     );
   }
 
-  if (recipientPhoneLink.profile_id === activeProfileId) {
+  if (payerPhoneLink.profile_id === activeProfileId) {
     return NextResponse.json(
-      { error: "Choose a different phone number for the recipient." },
+      { error: "Choose a different phone number for the payer." },
       { status: 400 },
     );
   }
 
-  const approvalOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const intentId = randomUUID();
+  const approvalOtp = createOtp();
+  const approvalUrlBase =
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? new URL(request.url).origin;
+  const approvalUrl = `${approvalUrlBase}/approve/${intentId}`;
+  const approvalOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
   const { data: paymentIntent, error: paymentIntentError } = await supabase
     .from("payment_intents")
     .insert({
-      sender_profile_id: activeProfileId,
-      recipient_profile_id: recipientPhoneLink.profile_id,
-      recipient_phone_number: recipientPhoneLink.phone_number,
+      id: intentId,
+      sender_profile_id: payerPhoneLink.profile_id,
+      recipient_profile_id: activeProfileId,
+      recipient_phone_number: payerPhoneLink.phone_number,
+      payer_phone_number: payerPhoneLink.phone_number,
       amount,
       currency: parsed.data.currency,
       note: parsed.data.note?.trim() || null,
       status: "pending",
-      approval_otp: approvalOtp,
+      approval_otp: process.env.NODE_ENV === "production" ? null : approvalOtp,
+      approval_otp_hash: hashPaymentOtp(intentId, approvalOtp),
       approval_otp_sent_at: new Date().toISOString(),
+      approval_otp_expires_at: approvalOtpExpiresAt,
     })
     .select(
-      "id, sender_profile_id, recipient_profile_id, recipient_phone_number, amount, currency, note, status, transaction_signature, created_at, updated_at",
+      "id, sender_profile_id, recipient_profile_id, recipient_phone_number, payer_phone_number, amount, currency, note, status, transaction_signature, created_at, updated_at",
     )
     .single();
 
@@ -100,16 +112,42 @@ export async function POST(request: Request) {
     );
   }
 
-  console.log(
-    `[OTPay] Request OTP ${approvalOtp} sent to ${recipientPhoneLink.phone_number} for payment intent ${paymentIntent.id}`,
-  );
+  try {
+    await sendPaymentOtpSms({
+      to: payerPhoneLink.phone_number,
+      requesterName: requesterProfile.display_name,
+      amount: amount.toString(),
+      currency: parsed.data.currency,
+      otp: approvalOtp,
+      approvalUrl,
+    });
+  } catch (smsError) {
+    await supabase.from("payment_intents").delete().eq("id", paymentIntent.id);
+
+    return NextResponse.json(
+      {
+        error:
+          smsError instanceof Error
+            ? smsError.message
+            : "Could not send the payment OTP. No request was created.",
+      },
+      { status: 502 },
+    );
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[OTPay] Dev OTP ${approvalOtp} sent to ${payerPhoneLink.phone_number} for payment intent ${paymentIntent.id}`,
+    );
+  }
 
   return NextResponse.json({
     ok: true,
     message: "Payment intent created successfully.",
     data: {
       paymentIntent,
-      senderProfile,
+      senderProfile: requesterProfile,
+      approvalUrl,
     },
   });
 }

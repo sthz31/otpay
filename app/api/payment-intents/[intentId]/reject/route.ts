@@ -30,7 +30,7 @@ export async function POST(
   const supabase = getSupabaseServerClient();
   const { data: paymentIntent, error: lookupError } = await supabase
     .from("payment_intents")
-    .select("id, recipient_profile_id, status")
+    .select("id, sender_profile_id, status")
     .eq("id", intentId)
     .maybeSingle();
 
@@ -42,9 +42,9 @@ export async function POST(
     return NextResponse.json({ error: "Payment intent not found." }, { status: 404 });
   }
 
-  if (paymentIntent.recipient_profile_id !== activeProfileId) {
+  if (paymentIntent.sender_profile_id !== activeProfileId) {
     return NextResponse.json(
-      { error: "Only the intended recipient can reject this request." },
+      { error: "Only the intended payer can reject this request." },
       { status: 403 },
     );
   }
@@ -61,7 +61,7 @@ export async function POST(
     .update({ status: "rejected" })
     .eq("id", intentId)
     .select(
-      "id, sender_profile_id, recipient_profile_id, recipient_phone_number, amount, currency, note, status, transaction_signature, created_at, updated_at",
+      "id, sender_profile_id, recipient_profile_id, recipient_phone_number, payer_phone_number, amount, currency, note, status, transaction_signature, created_at, updated_at",
     )
     .single();
 

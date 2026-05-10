@@ -48,7 +48,5 @@ export const paymentIntentConfirmSchema = z.object({
 
 export const settlementSchema = z.object({
   paymentIntentId: z.string().min(1, "paymentIntentId is required"),
-  senderWalletAddress: z.string().min(32, "senderWalletAddress is required"),
-  recipientWalletAddress: z.string().min(32, "recipientWalletAddress is required"),
-  amount: z.string().min(1, "amount is required"),
+  signature: z.string().min(32, "signature is required").optional(),
 });
