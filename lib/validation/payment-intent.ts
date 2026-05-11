@@ -48,5 +48,6 @@ export const paymentIntentConfirmSchema = z.object({
 
 export const settlementSchema = z.object({
   paymentIntentId: z.string().min(1, "paymentIntentId is required"),
+  otp: z.string().regex(/^\d{4}$/, "OTP must be exactly 4 digits.").optional(),
   signature: z.string().min(32, "signature is required").optional(),
 });

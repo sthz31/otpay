@@ -2,49 +2,91 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  getSolscanDevnetAddressUrl,
+  getSolscanDevnetTransactionUrl,
+} from "@/lib/solana/explorer";
 import type {
   PaymentIntentSummary,
   ProfileSummary,
 } from "@/lib/supabase/otpay-queries";
 import { LogoutButton } from "./logout-button";
 
+type WalletBalances = {
+  sol: number | null;
+  usdc: number | null;
+  usdcAta: string;
+};
+
 type DashboardShellProps = {
   profile: ProfileSummary;
+  balances: WalletBalances;
   recentIntents: PaymentIntentSummary[];
   outstandingIncoming: PaymentIntentSummary[];
+  view?: "wallet" | "requests" | "activity";
+};
+
+type TopUpResponse = {
+  ok: boolean;
+  message?: string;
+  error?: string;
+  data?: {
+    solAmount: number;
+    usdcAmount: number;
+    solError: string | null;
+    solSignature: string | null;
+    usdcSignature: string | null;
+    balances: WalletBalances;
+  };
 };
 
 type IconName =
   | "activity"
   | "arrow-down-left"
   | "arrow-up-right"
-  | "bell"
   | "check"
   | "copy"
-  | "dashboard"
+  | "external"
   | "menu"
-  | "settings"
+  | "plus"
+  | "shield"
   | "wallet"
   | "x";
 
 const navigation = [
-  { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
-  { label: "Requests", href: "/request-payment", icon: "bell" },
-  { label: "Activity", href: "/dashboard#activity", icon: "activity" },
-  { label: "Wallet", href: "/dashboard#wallet", icon: "wallet" },
-  { label: "Settings", href: "/dashboard#settings", icon: "settings" },
+  { label: "Wallet", href: "/dashboard", icon: "wallet" },
+  { label: "Pay requests", href: "/requests", icon: "shield" },
+  { label: "Request", href: "/request-payment", icon: "plus" },
+  { label: "Activity", href: "/activity", icon: "activity" },
 ] satisfies { label: string; href: string; icon: IconName }[];
 
 const primaryButtonClassName =
   "inline-flex min-h-11 items-center justify-center rounded-full bg-[linear-gradient(180deg,#00e95a_0%,#00c84b_100%)] px-5 text-sm font-extrabold text-[var(--foreground)] shadow-[0_10px_24px_rgba(0,214,79,0.18)] transition hover:brightness-105 hover:shadow-[0_12px_28px_rgba(0,214,79,0.24)] active:translate-y-px active:brightness-95 disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2";
 
-function formatAmount(amount: number) {
+const secondaryButtonClassName =
+  "inline-flex min-h-11 items-center justify-center rounded-full border border-black/10 bg-white/72 px-5 text-sm font-bold text-[var(--foreground)] transition hover:bg-white active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2";
+
+const topUpAmounts = [10, 25, 50] as const;
+const lowSolThreshold = 0.003;
+const demoCardDefaults = {
+  name: "Fresh Payer",
+  number: "4242 4242 4242 4242",
+  expiry: "12/30",
+  cvc: "123",
+};
+
+function formatAmount(amount: number, maximumFractionDigits = 2) {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
+    maximumFractionDigits,
   }).format(amount);
+}
+
+function formatTokenBalance(value: number | null, symbol: string) {
+  if (value === null) return `-- ${symbol}`;
+  return `${formatAmount(value, symbol === "SOL" ? 4 : 2)} ${symbol}`;
 }
 
 function formatDate(value: string) {
@@ -56,9 +98,9 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function truncateAddress(value: string) {
-  if (value.length <= 16) return value;
-  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+function truncateAddress(value: string, chars = 5) {
+  if (value.length <= chars * 2 + 3) return value;
+  return `${value.slice(0, chars)}...${value.slice(-chars)}`;
 }
 
 function initials(name: string) {
@@ -72,32 +114,19 @@ function initials(name: string) {
 
 function useActiveNavLabel() {
   const pathname = usePathname();
-  const [hash, setHash] = useState("");
 
-  useEffect(() => {
-    function syncHash() {
-      setHash(window.location.hash);
-    }
-
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-
-    return () => {
-      window.removeEventListener("hashchange", syncHash);
-    };
-  }, []);
-
-  if (pathname === "/request-payment") return "Requests";
-  if (pathname === "/dashboard" && hash === "#activity") return "Activity";
-  if (pathname === "/dashboard" && hash === "#wallet") return "Wallet";
-  if (pathname === "/dashboard" && hash === "#settings") return "Settings";
-  return "Dashboard";
+  if (pathname === "/request-payment") return "Request";
+  if (pathname === "/requests") return "Pay requests";
+  if (pathname === "/activity") return "Activity";
+  return "Wallet";
 }
 
 export function DashboardShell({
   profile,
+  balances,
   recentIntents,
   outstandingIncoming,
+  view = "wallet",
 }: DashboardShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -122,8 +151,6 @@ export function DashboardShell({
     };
   }, [drawerOpen]);
 
-  const settledCount = recentIntents.filter((intent) => intent.status === "settled").length;
-
   return (
     <div className="h-dvh overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
       <MobileTopBar
@@ -138,60 +165,658 @@ export function DashboardShell({
         profile={profile}
       />
 
-      <div className="mx-auto grid h-full w-full max-w-[1440px] overflow-hidden lg:grid-cols-[264px_minmax(0,1fr)]">
+      <div className="mx-auto grid h-full w-full max-w-[1440px] overflow-hidden lg:grid-cols-[244px_minmax(0,1fr)]">
         <Sidebar activeNavLabel={activeNavLabel} profile={profile} />
 
         <main className="flex h-full min-w-0 flex-col overflow-hidden lg:p-4">
-          <TopBar profileName={profile.display_name} />
+          <TopBar
+            profileName={profile.display_name}
+            pendingCount={outstandingIncoming.length}
+            view={view}
+          />
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-8 pt-20 sm:px-6 lg:mt-4 lg:px-4 lg:pt-0">
-            <section className="rounded-[32px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_80px_rgba(8,17,9,0.09)] backdrop-blur sm:p-8">
-              <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-                <div>
-                  <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-                    Dashboard
-                  </p>
-                  <h1 className="mt-3 max-w-3xl text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground)] sm:text-4xl lg:text-5xl">
-                    OTPay request dashboard
-                  </h1>
-                  <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--muted)]">
-                    Review live payment requests, track approvals, and send new requests from one
-                    place.
-                  </p>
-                </div>
-                <PrimaryButton href="/request-payment" className="w-full sm:w-fit">
-                  Request payment
-                </PrimaryButton>
+            {view === "wallet" ? (
+              <div className="grid gap-6">
+                <WalletHero balances={balances} />
+                <WalletDetailsCard profile={profile} balances={balances} />
               </div>
-            </section>
+            ) : null}
 
-            <section
-              className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1.18fr_0.82fr]"
-              aria-label="Account summary"
-            >
-              <SummaryCard eyebrow="Profile" title={profile.display_name} helper={profile.phone_number ?? "No phone linked"} />
-              <WalletCard walletAddress={profile.wallet_address} verified={profile.is_verified} />
-              <QueueCard count={outstandingIncoming.length} settledCount={settledCount} />
-            </section>
+            {view === "requests" ? (
+              <PendingPaymentsSection requests={outstandingIncoming} profileId={profile.id} />
+            ) : null}
 
-            <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.06fr)_minmax(360px,0.94fr)]">
-              <IncomingRequestsSection profileId={profile.id} requests={outstandingIncoming} />
-              <RecentActivitySection profileId={profile.id} intents={recentIntents} />
-            </section>
-
-            <section
-              id="settings"
-              className="mt-6 rounded-[28px] border border-black/10 bg-white/60 p-5 text-sm text-[var(--muted)]"
-            >
-              <p className="font-semibold text-[var(--foreground)]">Settings</p>
-              <p className="mt-1">
-                Phone identity, approval preferences, and settlement controls will live here as OTPay
-                grows.
-              </p>
-            </section>
+            {view === "activity" ? (
+              <RecentActivitySection profileId={profile.id} intents={recentIntents} flushTop />
+            ) : null}
           </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+function WalletHero({
+  balances,
+}: {
+  balances: WalletBalances;
+}) {
+  const router = useRouter();
+  const [topUpOpen, setTopUpOpen] = useState(false);
+  const [selectedAmount, setSelectedAmount] = useState<(typeof topUpAmounts)[number]>(25);
+  const [cardName, setCardName] = useState(demoCardDefaults.name);
+  const [cardNumber, setCardNumber] = useState(demoCardDefaults.number);
+  const [cardExpiry, setCardExpiry] = useState(demoCardDefaults.expiry);
+  const [cardCvc, setCardCvc] = useState(demoCardDefaults.cvc);
+  const [submitting, setSubmitting] = useState(false);
+  const [topUpError, setTopUpError] = useState("");
+  const [topUpResult, setTopUpResult] = useState<TopUpResponse["data"] | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const topUpTriggerRef = useRef<HTMLButtonElement>(null);
+  const hasLowSol = (balances.sol ?? 0) < lowSolThreshold;
+
+  useEffect(() => {
+    if (!topUpOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setTopUpOpen(false);
+        topUpTriggerRef.current?.focus();
+      }
+    }
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [topUpOpen]);
+
+  async function handleTopUp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setTopUpError("");
+    setTopUpResult(null);
+
+    try {
+      const response = await fetch("/api/wallet/top-up", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          usdcAmount: selectedAmount,
+        }),
+      });
+      const payload = (await response.json()) as TopUpResponse;
+
+      if (!response.ok || !payload.ok || !payload.data) {
+        throw new Error(payload.error ?? "Could not load demo funds right now.");
+      }
+
+      setTopUpResult(payload.data);
+      setCardName(demoCardDefaults.name);
+      setCardNumber(demoCardDefaults.number);
+      setCardExpiry(demoCardDefaults.expiry);
+      setCardCvc(demoCardDefaults.cvc);
+      router.refresh();
+    } catch (error) {
+      setTopUpError(error instanceof Error ? error.message : "Could not load demo funds right now.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section
+      id="wallet"
+      className="rounded-[32px] border border-white/70 bg-[#0b160c] p-6 text-[#f3fde8] shadow-[0_28px_90px_rgba(8,17,9,0.18)] sm:p-8"
+    >
+      <div className="flex flex-col gap-8 xl:flex-row xl:items-end xl:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-[#dfffe8]">
+              Devnet wallet
+            </span>
+            <span className="rounded-full border border-[#00e95a]/30 bg-[#00e95a]/12 px-3 py-1 text-xs font-bold text-[#dfffe8]">
+              Phone verified
+            </span>
+          </div>
+          <p className="mt-6 text-sm font-semibold text-[#a9c8ae]">Available balance</p>
+          <h1 className="mt-2 font-mono text-5xl font-semibold tracking-[-0.06em] text-[#f3fde8] sm:text-6xl">
+            {formatTokenBalance(balances.usdc, "USDC")}
+          </h1>
+          <p className="mt-4 max-w-xl text-sm leading-6 text-[#a9c8ae]">
+            Load test funds, request USDC by phone, and open devnet proof from one place.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:min-w-[340px]">
+          <BalancePill label="USDC" value={formatTokenBalance(balances.usdc, "USDC")} />
+          <BalancePill label="Fees" value={formatTokenBalance(balances.sol, "SOL")} />
+        </div>
+      </div>
+
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+        <button
+          ref={topUpTriggerRef}
+          type="button"
+          onClick={() => {
+            setTopUpError("");
+            setTopUpResult(null);
+            setTopUpOpen(true);
+          }}
+          className={`${primaryButtonClassName} sm:w-fit`}
+        >
+          Load USDC from card
+        </button>
+        <Link href="/request-payment" className={`${secondaryButtonClassName} border-white/10 bg-white/10 text-[#f3fde8] hover:bg-white/14 sm:w-fit`}>
+          Request payment
+        </Link>
+      </div>
+      {hasLowSol ? (
+        <p className="mt-4 rounded-2xl border border-[#f6e58d]/20 bg-[#f6e58d]/10 px-4 py-3 text-sm font-semibold text-[#f8f4c0]">
+          Add SOL for fees before paying requests.
+        </p>
+      ) : null}
+
+      {topUpOpen ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[rgba(5,17,6,0.42)] px-4 py-6 text-[var(--foreground)] backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="top-up-title"
+          onClick={() => {
+            setTopUpOpen(false);
+            topUpTriggerRef.current?.focus();
+          }}
+        >
+          <div
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto rounded-[32px] border border-white/70 bg-[rgba(245,255,244,0.98)] p-5 shadow-[0_28px_90px_rgba(8,17,9,0.24)] sm:p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                  Demo card top-up
+                </p>
+                <h2
+                  id="top-up-title"
+                  className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground)]"
+                >
+                  Load USDC from card
+                </h2>
+                <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--muted)]">
+                  Simulate a card payment. OTPay only sends the preset amount to the server;
+                  these card details are never stored.
+                </p>
+                <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
+                  Demo limit: 100 USDC per wallet per UTC day.
+                </p>
+              </div>
+              <button
+                ref={closeButtonRef}
+                type="button"
+                aria-label="Close load funds dialog"
+                onClick={() => {
+                  setTopUpOpen(false);
+                  topUpTriggerRef.current?.focus();
+                }}
+                className="inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--foreground)] transition hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+              >
+                <Icon name="x" />
+              </button>
+            </div>
+
+            <form className="mt-6 grid gap-5" onSubmit={handleTopUp}>
+              <fieldset className="grid gap-3">
+                <legend className="text-sm font-bold text-[var(--foreground)]">Amount</legend>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {topUpAmounts.map((amount) => (
+                    <button
+                      key={amount}
+                      type="button"
+                      onClick={() => setSelectedAmount(amount)}
+                      className={`min-h-20 rounded-[24px] border px-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 ${
+                        selectedAmount === amount
+                          ? "border-[var(--accent)] bg-[var(--accent-soft)] shadow-[0_12px_30px_rgba(0,214,79,0.14)]"
+                          : "border-black/10 bg-white hover:bg-[var(--accent-soft)]"
+                      }`}
+                    >
+                      <span className="block font-mono text-2xl font-semibold tracking-[-0.04em]">
+                        {amount} USDC
+                      </span>
+                      <span className="mt-1 block text-xs font-semibold text-[var(--muted)]">
+                        + 0.05 SOL fees
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <div className="grid gap-4 rounded-[26px] border border-black/10 bg-white/76 p-4 sm:grid-cols-2">
+                <label className="grid gap-2 text-sm font-semibold">
+                  Name on card
+                  <input
+                    className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+                    value={cardName}
+                    onChange={(event) => setCardName(event.target.value)}
+                    placeholder="Fresh Payer"
+                    autoComplete="cc-name"
+                    required
+                  />
+                </label>
+                <label className="grid gap-2 text-sm font-semibold">
+                  Card number
+                  <input
+                    className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+                    value={cardNumber}
+                    onChange={(event) => setCardNumber(event.target.value)}
+                    placeholder="4242 4242 4242 4242"
+                    autoComplete="cc-number"
+                    inputMode="numeric"
+                    required
+                  />
+                </label>
+                <label className="grid gap-2 text-sm font-semibold">
+                  Expiry
+                  <input
+                    className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+                    value={cardExpiry}
+                    onChange={(event) => setCardExpiry(event.target.value)}
+                    placeholder="12/30"
+                    autoComplete="cc-exp"
+                    required
+                  />
+                </label>
+                <label className="grid gap-2 text-sm font-semibold">
+                  CVC
+                  <input
+                    className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+                    value={cardCvc}
+                    onChange={(event) => setCardCvc(event.target.value)}
+                    placeholder="123"
+                    autoComplete="cc-csc"
+                    inputMode="numeric"
+                    required
+                  />
+                </label>
+              </div>
+
+              {topUpError ? (
+                <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {topUpError}
+                </p>
+              ) : null}
+
+              {topUpResult ? (
+                <div className="rounded-[24px] border border-[rgba(0,214,79,0.28)] bg-[var(--accent-soft)] p-4 text-sm">
+                  <p className="font-bold text-[var(--foreground)]">Funds loaded.</p>
+                  <p className="mt-1 text-[var(--muted)]">
+                    Added {topUpResult.usdcAmount} USDC
+                    {topUpResult.solSignature ? ` and ${topUpResult.solAmount} SOL` : ""} to
+                    this devnet wallet.
+                  </p>
+                  {topUpResult.solError ? (
+                    <p className="mt-3 rounded-2xl border border-[#f6e58d]/40 bg-[#fff8c8]/70 px-4 py-3 text-sm font-semibold text-[#5c4d00]">
+                      USDC loaded, but the devnet SOL faucet failed. Try Load USDC from card again
+                      later or airdrop SOL manually before paying requests.
+                    </p>
+                  ) : null}
+                  <div className="mt-3 grid gap-2">
+                    {topUpResult.usdcSignature ? (
+                      <a
+                        href={getSolscanDevnetTransactionUrl(topUpResult.usdcSignature)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="break-all font-mono text-xs font-semibold underline decoration-lime-700/40 underline-offset-4"
+                      >
+                        USDC transfer: {topUpResult.usdcSignature}
+                      </a>
+                    ) : null}
+                    {topUpResult.solSignature ? (
+                      <a
+                        href={getSolscanDevnetTransactionUrl(topUpResult.solSignature)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="break-all font-mono text-xs font-semibold underline decoration-lime-700/40 underline-offset-4"
+                      >
+                        SOL airdrop: {topUpResult.solSignature}
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  aria-busy={submitting}
+                  className={primaryButtonClassName}
+                >
+                  {submitting ? "Loading funds..." : `Load ${selectedAmount} USDC`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTopUpOpen(false);
+                    topUpTriggerRef.current?.focus();
+                  }}
+                  className={secondaryButtonClassName}
+                >
+                  Close
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function BalancePill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[24px] border border-white/10 bg-white/8 p-4">
+      <p className="font-mono text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[#a9c8ae]">
+        {label}
+      </p>
+      <p className="mt-2 truncate font-mono text-sm font-bold text-[#f3fde8]">{value}</p>
+    </div>
+  );
+}
+
+function WalletDetailsCard({
+  profile,
+  balances,
+}: {
+  profile: ProfileSummary;
+  balances: WalletBalances;
+}) {
+  return (
+    <section className="rounded-[32px] border border-white/70 bg-white/84 p-5 shadow-[0_24px_80px_rgba(8,17,9,0.08)] sm:p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            Wallet details
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
+            Test custody
+          </h2>
+        </div>
+        <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-bold text-[var(--foreground)]">
+          Devnet
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        <AddressRow label="Wallet address" value={profile.wallet_address} />
+        <AddressRow label="USDC token account" value={balances.usdcAta} />
+      </div>
+
+      <a
+        href={getSolscanDevnetAddressUrl(profile.wallet_address)}
+        target="_blank"
+        rel="noreferrer"
+        className={`${secondaryButtonClassName} mt-5 w-full gap-2`}
+      >
+        View wallet on Solscan
+        <Icon name="external" />
+      </a>
+    </section>
+  );
+}
+
+function AddressRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <div className="rounded-[24px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-4">
+      <p className="text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted)]">{label}</p>
+      <div className="mt-2 flex items-center gap-2">
+        <p className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-[var(--foreground)]">
+          {truncateAddress(value)}
+        </p>
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={`Copy ${label}`}
+          className="inline-flex size-10 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--foreground)] transition hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+        >
+          <Icon name={copied ? "check" : "copy"} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PendingPaymentsSection({
+  requests,
+  profileId,
+}: {
+  requests: PaymentIntentSummary[];
+  profileId: string;
+}) {
+  return (
+    <section
+      id="requests"
+      className="rounded-[32px] border border-white/70 bg-white/84 p-5 shadow-[0_24px_80px_rgba(8,17,9,0.08)] sm:p-6"
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            Pay requests
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
+            Waiting for you
+          </h2>
+        </div>
+        <span className="inline-flex min-h-9 w-fit items-center rounded-full bg-[var(--accent-soft)] px-3 text-sm font-bold text-[var(--foreground)]">
+          {requests.length} pending
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        {requests.length ? (
+          requests.map((intent) => (
+            <RequestCard key={intent.id} intent={intent} profileId={profileId} />
+          ))
+        ) : (
+          <EmptyState
+            title="No payments waiting"
+            body="Incoming requests you need to approve will appear here."
+            actionLabel="Request from someone"
+            actionHref="/request-payment"
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RequestCard({
+  intent,
+  profileId,
+}: {
+  intent: PaymentIntentSummary;
+  profileId: string;
+}) {
+  const counterparty =
+    intent.sender_profile_id === profileId
+      ? intent.recipient_display_name ?? "Unknown requester"
+      : intent.sender_display_name ?? intent.payer_phone_number ?? "Unknown payer";
+
+  return (
+    <article className="rounded-[26px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
+            {formatAmount(intent.amount)} {intent.currency}
+          </p>
+          <p className="mt-1 truncate text-sm font-semibold text-[var(--foreground)]">
+            Requested by {counterparty}
+          </p>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {formatDate(intent.created_at)}
+            {intent.note ? ` · ${intent.note}` : ""}
+          </p>
+        </div>
+        <Link
+          href={`/approve/${intent.id}`}
+          className={`${primaryButtonClassName} shrink-0`}
+        >
+          Pay request
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function RecentActivitySection({
+  intents,
+  profileId,
+  flushTop = false,
+}: {
+  intents: PaymentIntentSummary[];
+  profileId: string;
+  flushTop?: boolean;
+}) {
+  return (
+    <section
+      id="activity"
+      className={`${flushTop ? "" : "mt-6"} rounded-[32px] border border-white/70 bg-white/84 p-5 shadow-[0_24px_80px_rgba(8,17,9,0.08)] sm:p-6`}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            Activity
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
+            Wallet history
+          </h2>
+        </div>
+        <p className="text-sm font-medium text-[var(--muted)]">Latest requests and settlements</p>
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        {intents.length ? (
+          intents.map((intent) => (
+            <ActivityItem key={intent.id} intent={intent} profileId={profileId} />
+          ))
+        ) : (
+          <EmptyState
+            title="No wallet activity"
+            body="Create a payment request to start tracking approvals and devnet settlement."
+            actionLabel="Request payment"
+            actionHref="/request-payment"
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ActivityItem({
+  intent,
+  profileId,
+}: {
+  intent: PaymentIntentSummary;
+  profileId: string;
+}) {
+  const isPayer = intent.sender_profile_id === profileId;
+  const counterparty = isPayer
+    ? intent.recipient_display_name ?? "Unknown requester"
+    : intent.sender_display_name ?? intent.payer_phone_number ?? "Unknown payer";
+  const href = intent.status === "pending" && isPayer ? `/approve/${intent.id}` : `/status/${intent.id}`;
+
+  return (
+    <div className="grid gap-3 rounded-[24px] border border-black/10 bg-[rgba(245,255,244,0.64)] p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <Link
+        href={href}
+        className="flex min-w-0 items-start gap-3 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+      >
+        <span className="mt-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-[var(--foreground)]">
+          <Icon name={isPayer ? "arrow-up-right" : "arrow-down-left"} />
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="font-semibold text-[var(--foreground)]">
+              {isPayer ? "Paid request" : "Requested payment"}
+            </p>
+            <StatusChip status={intent.status} />
+          </div>
+          <p className="mt-1 truncate text-sm text-[var(--muted)]">
+            {counterparty} · {formatDate(intent.created_at)}
+          </p>
+        </div>
+      </Link>
+      <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+        <p className="font-mono text-lg font-semibold tracking-[-0.03em] text-[var(--foreground)]">
+          {isPayer ? "-" : "+"}
+          {formatAmount(intent.amount)} {intent.currency}
+        </p>
+        {intent.transaction_signature ? (
+          <a
+            href={getSolscanDevnetTransactionUrl(intent.transaction_signature)}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open transaction on Solscan"
+            className="inline-flex size-10 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--foreground)] transition hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+          >
+            <Icon name="external" />
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function StatusChip({ status }: { status: PaymentIntentSummary["status"] }) {
+  const labels: Record<PaymentIntentSummary["status"], string> = {
+    approved: "Approved",
+    failed: "Failed",
+    pending: "Pending",
+    rejected: "Rejected",
+    settled: "Settled",
+    settling: "Settling",
+  };
+
+  return (
+    <span className="inline-flex min-h-7 items-center rounded-full border border-black/10 bg-white px-2.5 font-mono text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-[var(--muted-strong)]">
+      {labels[status]}
+    </span>
+  );
+}
+
+function EmptyState({
+  title,
+  body,
+  actionLabel,
+  actionHref,
+}: {
+  title: string;
+  body: string;
+  actionLabel: string;
+  actionHref: string;
+}) {
+  return (
+    <div className="rounded-[26px] border border-dashed border-black/10 bg-[rgba(245,255,244,0.68)] p-6 text-[var(--foreground)]">
+      <p className="text-base font-bold">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{body}</p>
+      <Link href={actionHref} className={`${primaryButtonClassName} mt-5`}>
+        {actionLabel}
+      </Link>
     </div>
   );
 }
@@ -214,11 +839,11 @@ function Sidebar({
         </nav>
         <div className="mt-7 rounded-[26px] border border-black/10 bg-[rgba(245,255,244,0.66)] p-4">
           <p className="font-mono text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
-            Live rail
+            Wallet mode
           </p>
-          <p className="mt-2 text-sm font-bold text-[var(--foreground)]">Phone to wallet</p>
+          <p className="mt-2 text-sm font-bold text-[var(--foreground)]">Devnet payments</p>
           <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-            Requests, approvals, and settlement stay in one flow.
+            OTP approvals settle from this test wallet.
           </p>
         </div>
         <div className="mt-auto grid gap-2.5 pt-5">
@@ -322,26 +947,38 @@ function MobileNavDrawer({
   );
 }
 
-function TopBar({ profileName }: { profileName: string }) {
+function TopBar({
+  profileName,
+  pendingCount,
+  view,
+}: {
+  profileName: string;
+  pendingCount: number;
+  view: NonNullable<DashboardShellProps["view"]>;
+}) {
+  const titleByView = {
+    activity: "Activity history",
+    requests: "Pay requests",
+    wallet: `Wallet for ${profileName}`,
+  } satisfies Record<NonNullable<DashboardShellProps["view"]>, string>;
+  const helperByView = {
+    activity: "Track requests, approvals, and devnet settlement.",
+    requests: pendingCount
+      ? `${pendingCount} payment request${pendingCount === 1 ? "" : "s"} waiting`
+      : "No payments waiting",
+    wallet: "Load demo USDC and manage your devnet wallet.",
+  } satisfies Record<NonNullable<DashboardShellProps["view"]>, string>;
+
   return (
     <header className="hidden min-h-16 shrink-0 items-center justify-between gap-4 rounded-full border border-white/70 bg-white/76 px-5 shadow-[0_16px_34px_rgba(10,24,10,0.08)] backdrop-blur lg:flex">
       <div>
-        <p className="text-sm font-semibold text-[var(--foreground)]">Welcome back, {profileName}</p>
-        <p className="text-xs font-medium text-[var(--muted)]">Phone-first payments on Solana</p>
+        <p className="text-sm font-semibold text-[var(--foreground)]">{titleByView[view]}</p>
+        <p className="text-xs font-medium text-[var(--muted)]">{helperByView[view]}</p>
       </div>
       <div className="flex items-center gap-3">
-        <Link
-          href="/"
-          className="inline-flex min-h-10 items-center justify-center rounded-full border border-black/10 bg-white/64 px-4 text-sm font-bold text-[var(--foreground)] transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
-        >
-          Landing
-        </Link>
-        <Link
-          href="/request-payment"
-          className={primaryButtonClassName}
-        >
-          Request payment
-        </Link>
+        <span className="inline-flex min-h-10 items-center rounded-full border border-black/10 bg-[var(--accent-soft)] px-4 text-sm font-bold text-[var(--foreground)]">
+          Devnet
+        </span>
       </div>
     </header>
   );
@@ -375,22 +1012,6 @@ function NavItem({
       ) : null}
       <Icon name={item.icon} />
       <span className={active ? "pl-2" : ""}>{item.label}</span>
-    </Link>
-  );
-}
-
-function PrimaryButton({
-  href,
-  children,
-  className = "",
-}: {
-  href: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <Link href={href} className={`${primaryButtonClassName} ${className}`}>
-      {children}
     </Link>
   );
 }
@@ -429,307 +1050,6 @@ function ProfileBlock({ profile }: { profile: ProfileSummary }) {
   );
 }
 
-function SummaryCard({
-  eyebrow,
-  title,
-  helper,
-}: {
-  eyebrow: string;
-  title: string;
-  helper: string;
-}) {
-  return (
-    <article className="rounded-[28px] border border-white/70 bg-white/82 p-5 shadow-[0_18px_48px_rgba(8,17,9,0.06)]">
-      <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-        {eyebrow}
-      </p>
-      <h2 className="mt-3 truncate text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
-        {title}
-      </h2>
-      <p className="mt-2 truncate text-sm font-medium text-[var(--muted)]">{helper}</p>
-    </article>
-  );
-}
-
-function WalletCard({
-  walletAddress,
-  verified,
-}: {
-  walletAddress: string;
-  verified: boolean;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function handleCopy() {
-    await navigator.clipboard.writeText(walletAddress);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  }
-
-  return (
-    <article
-      id="wallet"
-      className="rounded-[28px] border border-white/70 bg-white/82 p-5 shadow-[0_18px_48px_rgba(8,17,9,0.06)]"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-            Wallet
-          </p>
-          <p className="mt-3 truncate font-mono text-sm font-semibold text-[var(--foreground)]">
-            {truncateAddress(walletAddress)}
-          </p>
-          <p className="mt-2 text-sm font-medium text-[var(--muted)]">
-            {verified ? "Phone verified" : "Phone verification pending"}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={handleCopy}
-          aria-label="Copy wallet address"
-          className="inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--foreground)] transition hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
-        >
-          <Icon name={copied ? "check" : "copy"} />
-        </button>
-      </div>
-    </article>
-  );
-}
-
-function QueueCard({ count, settledCount }: { count: number; settledCount: number }) {
-  return (
-    <article className="rounded-[28px] border border-white/70 bg-white/72 p-5 shadow-[0_18px_48px_rgba(8,17,9,0.05)]">
-      <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-        Queue
-      </p>
-      <div className="mt-3 flex items-baseline gap-3">
-        <h2 className="text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground)]">{count}</h2>
-        <span className="text-sm font-semibold text-[var(--muted)]">pending approvals</span>
-      </div>
-      <p className="mt-2 text-sm font-medium text-[var(--muted)]">
-        {count === 0 ? "No approvals waiting" : "Open requests need review"}
-      </p>
-      <p className="mt-3 font-mono text-xs text-[var(--muted-strong)]">
-        {settledCount} settled recently
-      </p>
-    </article>
-  );
-}
-
-function IncomingRequestsSection({
-  requests,
-  profileId,
-}: {
-  requests: PaymentIntentSummary[];
-  profileId: string;
-}) {
-  return (
-    <section
-      id="requests"
-      className="rounded-[32px] border border-white/70 bg-white/84 p-5 shadow-[0_24px_80px_rgba(8,17,9,0.08)] sm:p-6"
-    >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
-            Pending approvals
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
-            Requests to pay
-          </h2>
-        </div>
-        <Link
-          href="/request-payment"
-          className={primaryButtonClassName}
-        >
-          Request payment
-        </Link>
-      </div>
-
-      <div className="mt-5 grid gap-3">
-        {requests.length ? (
-          requests.map((intent) => (
-            <RequestCard key={intent.id} intent={intent} profileId={profileId} />
-          ))
-        ) : (
-          <EmptyState
-            title="No requests to pay"
-            body="You don't have any pending payment requests waiting for your approval."
-            actionLabel="Request payment"
-            actionHref="/request-payment"
-          />
-        )}
-      </div>
-    </section>
-  );
-}
-
-function RequestCard({
-  intent,
-  profileId,
-}: {
-  intent: PaymentIntentSummary;
-  profileId: string;
-}) {
-  const counterparty =
-    intent.sender_profile_id === profileId
-      ? intent.recipient_display_name ?? "Unknown requester"
-      : intent.sender_display_name ?? intent.payer_phone_number ?? "Unknown payer";
-
-  return (
-    <article className="rounded-[26px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-4">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="truncate text-base font-bold text-[var(--foreground)]">
-            {counterparty} requested {formatAmount(intent.amount)} {intent.currency}
-          </p>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            {formatDate(intent.created_at)}
-            {intent.note ? ` · ${intent.note}` : ""}
-          </p>
-        </div>
-        <Link
-          href={`/approve/${intent.id}`}
-          className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full bg-[var(--surface-strong)] px-4 text-sm font-bold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
-        >
-          Review request
-        </Link>
-      </div>
-    </article>
-  );
-}
-
-function RecentActivitySection({
-  intents,
-  profileId,
-}: {
-  intents: PaymentIntentSummary[];
-  profileId: string;
-}) {
-  return (
-    <section
-      id="activity"
-      className="rounded-[32px] border border-white/70 bg-[#0b160c] p-5 text-[#f3fde8] shadow-[0_28px_90px_rgba(8,17,9,0.18)] sm:p-6"
-    >
-      <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[#a9c8ae]">
-        Recent activity
-      </p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">Sent and received</h2>
-
-      <div className="mt-5 grid gap-3">
-        {intents.length ? (
-          intents.map((intent) => (
-            <ActivityItem key={intent.id} intent={intent} profileId={profileId} />
-          ))
-        ) : (
-          <div className="rounded-[26px] border border-white/10 bg-white/8 p-5">
-            <EmptyState
-              inverted
-              title="No activity yet"
-              body="Create a payment request to start tracking approvals and settlement history."
-              actionLabel="Request payment"
-              actionHref="/request-payment"
-            />
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ActivityItem({
-  intent,
-  profileId,
-}: {
-  intent: PaymentIntentSummary;
-  profileId: string;
-}) {
-  const isPayer = intent.sender_profile_id === profileId;
-  const counterparty = isPayer
-    ? intent.recipient_display_name ?? "Unknown requester"
-    : intent.sender_display_name ?? intent.payer_phone_number ?? "Unknown payer";
-  const href = intent.status === "pending" && isPayer ? `/approve/${intent.id}` : `/status/${intent.id}`;
-
-  return (
-    <Link
-      href={href}
-      className="grid gap-3 rounded-[24px] border border-white/10 bg-white/8 p-4 transition hover:bg-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b160c] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-    >
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="mt-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-[#dfffe8]">
-          <Icon name={isPayer ? "arrow-up-right" : "arrow-down-left"} />
-        </span>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="font-semibold text-[#f3fde8]">
-              {isPayer ? "Paying" : "Requested"} request
-            </p>
-            <StatusChip status={intent.status} />
-          </div>
-          <p className="mt-1 truncate text-sm text-[#a9c8ae]">
-            {counterparty} · {formatDate(intent.created_at)}
-          </p>
-        </div>
-      </div>
-      <p className="font-mono text-lg font-semibold tracking-[-0.03em] text-[#f3fde8] sm:text-right">
-        {isPayer ? "-" : "+"}
-        {formatAmount(intent.amount)} {intent.currency}
-      </p>
-    </Link>
-  );
-}
-
-function StatusChip({ status }: { status: PaymentIntentSummary["status"] }) {
-  const labels: Record<PaymentIntentSummary["status"], string> = {
-    approved: "Approved",
-    failed: "Failed",
-    pending: "Pending",
-    rejected: "Rejected",
-    settled: "Settled",
-    settling: "Settling",
-  };
-
-  return (
-    <span className="inline-flex min-h-7 items-center rounded-full border border-white/10 bg-white/10 px-2.5 font-mono text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-[#dfffe8]">
-      {labels[status]}
-    </span>
-  );
-}
-
-function EmptyState({
-  title,
-  body,
-  actionLabel,
-  actionHref,
-  inverted = false,
-}: {
-  title: string;
-  body: string;
-  actionLabel: string;
-  actionHref: string;
-  inverted?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-[26px] border border-dashed p-6 ${
-        inverted
-          ? "border-white/14 bg-white/6 text-[#f3fde8]"
-          : "border-black/10 bg-[rgba(245,255,244,0.68)] text-[var(--foreground)]"
-      }`}
-    >
-      <p className="text-base font-bold">{title}</p>
-      <p className={`mt-2 text-sm leading-6 ${inverted ? "text-[#a9c8ae]" : "text-[var(--muted)]"}`}>
-        {body}
-      </p>
-      <Link
-        href={actionHref}
-        className={`${primaryButtonClassName} mt-5 ${inverted ? "focus-visible:ring-offset-[#0b160c]" : ""}`}
-      >
-        {actionLabel}
-      </Link>
-    </div>
-  );
-}
-
 function Icon({ name }: { name: IconName }) {
   const common = {
     fill: "none",
@@ -744,12 +1064,6 @@ function Icon({ name }: { name: IconName }) {
       {name === "activity" ? <path d="M3 12h4l3 7 4-14 3 7h4" /> : null}
       {name === "arrow-down-left" ? <path d="M17 7 7 17M7 7v10h10" /> : null}
       {name === "arrow-up-right" ? <path d="M7 17 17 7M7 7h10v10" /> : null}
-      {name === "bell" ? (
-        <>
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-          <path d="M10 21h4" />
-        </>
-      ) : null}
       {name === "check" ? <path d="m5 12 5 5L20 7" /> : null}
       {name === "copy" ? (
         <>
@@ -757,12 +1071,11 @@ function Icon({ name }: { name: IconName }) {
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </>
       ) : null}
-      {name === "dashboard" ? (
+      {name === "external" ? (
         <>
-          <rect width="7" height="9" x="3" y="3" rx="1" />
-          <rect width="7" height="5" x="14" y="3" rx="1" />
-          <rect width="7" height="9" x="14" y="12" rx="1" />
-          <rect width="7" height="5" x="3" y="16" rx="1" />
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <path d="M15 3h6v6" />
+          <path d="m10 14 11-11" />
         </>
       ) : null}
       {name === "menu" ? (
@@ -772,10 +1085,16 @@ function Icon({ name }: { name: IconName }) {
           <path d="M4 17h16" />
         </>
       ) : null}
-      {name === "settings" ? (
+      {name === "plus" ? (
         <>
-          <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
-          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6l-.08.12a2 2 0 0 1-3.84 0L10 20a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1l-.12-.08a2 2 0 0 1 0-3.84L4 10a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6l.08-.12a2 2 0 0 1 3.84 0L14 4a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.08.36.28.7.6 1l.12.08a2 2 0 0 1 0 3.84L20 14a1.7 1.7 0 0 0-.6 1Z" />
+          <path d="M12 5v14" />
+          <path d="M5 12h14" />
+        </>
+      ) : null}
+      {name === "shield" ? (
+        <>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+          <path d="m9 12 2 2 4-5" />
         </>
       ) : null}
       {name === "wallet" ? (

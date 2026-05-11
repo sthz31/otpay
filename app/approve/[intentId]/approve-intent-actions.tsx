@@ -2,12 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
-import { useSignAndSendTransaction, useWallets } from "@privy-io/react-auth/solana";
+import { getSolscanDevnetTransactionUrl } from "@/lib/solana/explorer";
 
 type ApproveIntentActionsProps = {
   intentId: string;
-  payerWalletAddress: string | null;
   initialStatus: string;
   initialApprovalMethod?: "payer_link" | "shared_otp" | null;
 };
@@ -17,11 +15,7 @@ type ActionResponse = {
   message?: string;
   error?: string;
   data?: {
-    canSettle?: boolean;
     transactionSignature?: string;
-    transfer?: {
-      transaction: string;
-    };
     paymentIntent?: {
       status: string;
       transaction_signature?: string | null;
@@ -35,68 +29,17 @@ const primaryButtonClassName =
 const secondaryButtonClassName =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-black/10 bg-white px-5 text-sm font-bold text-[var(--foreground)] transition hover:bg-zinc-50 active:translate-y-px disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2";
 
-function base64ToBytes(value: string) {
-  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
-}
-
-function encodeBase58(bytes: Uint8Array) {
-  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  const digits = [0];
-
-  for (const byte of bytes) {
-    let carry = byte;
-    for (let index = 0; index < digits.length; index += 1) {
-      carry += digits[index] << 8;
-      digits[index] = carry % 58;
-      carry = Math.floor(carry / 58);
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = Math.floor(carry / 58);
-    }
-  }
-
-  for (const byte of bytes) {
-    if (byte !== 0) break;
-    digits.push(0);
-  }
-
-  return digits
-    .reverse()
-    .map((digit) => alphabet[digit])
-    .join("");
-}
-
 export function ApproveIntentActions({
   intentId,
-  payerWalletAddress,
   initialStatus,
   initialApprovalMethod,
 }: ApproveIntentActionsProps) {
-  const { getAccessToken } = usePrivy();
-  const { wallets, ready } = useWallets();
-  const { signAndSendTransaction } = useSignAndSendTransaction();
   const [otp, setOtp] = useState("");
-  const [submitting, setSubmitting] = useState<"verify" | "reject" | "settle" | null>(null);
+  const [submitting, setSubmitting] = useState<"pay" | "reject" | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState(initialStatus);
   const [approvalMethod, setApprovalMethod] = useState(initialApprovalMethod ?? null);
   const [signature, setSignature] = useState<string | null>(null);
-
-  const canSettle = status === "approved" && approvalMethod === "payer_link";
-
-  async function buildAuthHeaders() {
-    const accessToken = await getAccessToken();
-
-    if (!accessToken) {
-      throw new Error("Privy session missing. Please log in again.");
-    }
-
-    return {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    };
-  }
 
   async function readPayload(response: Response) {
     const payload = (await response.json()) as ActionResponse;
@@ -108,25 +51,47 @@ export function ApproveIntentActions({
     return payload;
   }
 
-  async function handleVerifyOtp() {
-    setSubmitting("verify");
+  async function handleConfirmAndPay() {
+    setSubmitting("pay");
     setError("");
 
     try {
-      const response = await fetch(`/api/payment-intents/${intentId}/verify-otp`, {
+      let currentApprovalMethod = approvalMethod;
+
+      if (
+        status !== "pending" &&
+        (status !== "approved" || currentApprovalMethod !== "payer_link")
+      ) {
+        throw new Error("Only the payer can confirm the OTP and send this payment.");
+      }
+
+      const settleResponse = await fetch(`/api/payment-intents/${intentId}/settle`, {
         method: "POST",
-        headers: await buildAuthHeaders(),
-        body: JSON.stringify({ otp }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(status === "pending" ? { otp } : {}),
       });
-      const payload = await readPayload(response);
-      setStatus(payload.data?.paymentIntent?.status ?? "approved");
-      setApprovalMethod("payer_link");
+      const settled = await readPayload(settleResponse);
+      const settledStatus = settled.data?.paymentIntent?.status ?? "settled";
+      const settledSignature =
+        settled.data?.transactionSignature ??
+        settled.data?.paymentIntent?.transaction_signature ??
+        null;
+
+      if (status === "pending") {
+        currentApprovalMethod = "payer_link";
+      }
+
+      setStatus(settledStatus);
+      setApprovalMethod(currentApprovalMethod);
+      setSignature(settledSignature);
       setOtp("");
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Could not verify this OTP right now.",
+          : "Could not confirm and pay this request right now.",
       );
     } finally {
       setSubmitting(null);
@@ -140,7 +105,9 @@ export function ApproveIntentActions({
     try {
       const response = await fetch(`/api/payment-intents/${intentId}/reject`, {
         method: "POST",
-        headers: await buildAuthHeaders(),
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({}),
       });
       await readPayload(response);
@@ -156,68 +123,37 @@ export function ApproveIntentActions({
     }
   }
 
-  async function handleSignAndSend() {
-    setSubmitting("settle");
-    setError("");
-
-    try {
-      if (!ready) {
-        throw new Error("Your Solana wallet is still loading.");
-      }
-
-      const wallet = wallets.find((candidate) => candidate.address === payerWalletAddress);
-
-      if (!wallet) {
-        throw new Error("Open OTPay with the payer wallet to sign this transfer.");
-      }
-
-      const prepareResponse = await fetch(`/api/payment-intents/${intentId}/settle`, {
-        method: "POST",
-        headers: await buildAuthHeaders(),
-        body: JSON.stringify({}),
-      });
-      const prepared = await readPayload(prepareResponse);
-      const transaction = prepared.data?.transfer?.transaction;
-
-      if (!transaction) {
-        throw new Error("The server did not return a transaction to sign.");
-      }
-
-      const signed = await signAndSendTransaction({
-        wallet,
-        chain: "solana:devnet",
-        transaction: base64ToBytes(transaction),
-      });
-      const transactionSignature = encodeBase58(signed.signature);
-      const recordResponse = await fetch(`/api/payment-intents/${intentId}/settle`, {
-        method: "POST",
-        headers: await buildAuthHeaders(),
-        body: JSON.stringify({ signature: transactionSignature }),
-      });
-      const recorded = await readPayload(recordResponse);
-
-      setStatus(recorded.data?.paymentIntent?.status ?? "settled");
-      setSignature(recorded.data?.transactionSignature ?? transactionSignature);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Could not sign and send this transfer right now.",
-      );
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
   if (status === "settled" || signature) {
     return (
       <div className="rounded-[28px] border border-lime-200 bg-lime-50 p-6 text-sm text-lime-950">
-        <p className="font-semibold">Payment settled on Solana.</p>
-        <p className="mt-2 break-all font-mono text-xs">{signature}</p>
+        <p className="text-lg font-semibold tracking-[-0.03em]">Payment settled on Solana devnet.</p>
+        <p className="mt-2 leading-6 text-lime-900">
+          The transaction signature is recorded and ready to verify.
+        </p>
+        {signature ? (
+          <a
+            href={getSolscanDevnetTransactionUrl(signature)}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 block break-all font-mono text-xs font-semibold underline decoration-lime-700/40 underline-offset-4 transition hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2"
+          >
+            {signature}
+          </a>
+        ) : null}
         <div className="mt-5 flex flex-wrap gap-3">
           <Link href={`/status/${intentId}`} className={primaryButtonClassName}>
             View status
           </Link>
+          {signature ? (
+            <a
+              href={getSolscanDevnetTransactionUrl(signature)}
+              target="_blank"
+              rel="noreferrer"
+              className={secondaryButtonClassName}
+            >
+              View on Solscan
+            </a>
+          ) : null}
           <Link href="/dashboard" className={secondaryButtonClassName}>
             Back to dashboard
           </Link>
@@ -228,8 +164,8 @@ export function ApproveIntentActions({
 
   if (status === "rejected") {
     return (
-      <div className="rounded-[28px] border border-black/10 bg-white/90 p-6 text-sm text-zinc-700">
-        <p className="font-semibold text-zinc-950">Request rejected.</p>
+      <div className="rounded-[28px] border border-black/10 bg-white/90 p-6 text-sm text-[var(--muted)]">
+        <p className="text-lg font-semibold tracking-[-0.03em] text-[var(--foreground)]">Request rejected.</p>
         <p className="mt-2">No funds were moved.</p>
         <div className="mt-5">
           <Link href="/dashboard" className={secondaryButtonClassName}>
@@ -241,23 +177,23 @@ export function ApproveIntentActions({
   }
 
   return (
-    <div className="rounded-[28px] border border-black/10 bg-white/90 p-6 shadow-[0_18px_48px_rgba(8,17,9,0.06)]">
-      <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Payment approval</p>
-      <h2 className="mt-3 text-2xl font-semibold tracking-tight text-zinc-950">
+    <div className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-[0_18px_48px_rgba(8,17,9,0.06)]">
+      <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Payment approval</p>
+      <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
         Pay request
       </h2>
-      <p className="mt-3 text-sm leading-6 text-zinc-600">
-        Confirm the OTP sent to your phone, then sign and send the USDC transfer from
-        your Solana wallet. OTPay never handles your private key.
+      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+        Confirm the OTP from the server terminal. OTPay immediately signs and
+        sends this devnet USDC payment from the encrypted test wallet.
       </p>
 
       {status === "pending" ? (
-        <label className="mt-5 grid gap-2 text-sm font-semibold text-zinc-900">
+        <label className="mt-5 grid gap-2 text-sm font-semibold text-[var(--foreground)]">
           Payment OTP
           <input
-            className="min-h-13 rounded-2xl border border-black/10 bg-white px-4 py-3 text-center font-mono text-xl font-normal tracking-[0.28em] text-zinc-900 outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+            className="min-h-13 rounded-2xl border border-black/10 bg-white px-4 py-3 text-center font-mono text-xl font-normal tracking-[0.28em] text-[var(--foreground)] outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
             value={otp}
-            onChange={(event) => setOtp(event.target.value)}
+            onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 4))}
             placeholder="0000"
             type="text"
             inputMode="numeric"
@@ -276,26 +212,14 @@ export function ApproveIntentActions({
       ) : null}
 
       <div className="mt-5 flex flex-wrap gap-3">
-        {status === "pending" ? (
-          <button
-            type="button"
-            disabled={Boolean(submitting) || otp.length !== 4}
-            onClick={handleVerifyOtp}
-            className={primaryButtonClassName}
-          >
-            {submitting === "verify" ? "Verifying..." : "Confirm OTP"}
-          </button>
-        ) : null}
-        {canSettle ? (
-          <button
-            type="button"
-            disabled={Boolean(submitting)}
-            onClick={handleSignAndSend}
-            className={primaryButtonClassName}
-          >
-            {submitting === "settle" ? "Signing..." : "Sign and send"}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          disabled={Boolean(submitting) || (status === "pending" && otp.length !== 4)}
+          onClick={handleConfirmAndPay}
+          className={primaryButtonClassName}
+        >
+          {submitting === "pay" ? "Paying..." : "Confirm OTP and pay"}
+        </button>
         {status === "pending" ? (
           <button
             type="button"

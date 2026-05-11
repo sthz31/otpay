@@ -1,5 +1,12 @@
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SendTransactionError,
+  Transaction,
+} from "@solana/web3.js";
+import {
+  ACCOUNT_SIZE,
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   getAssociatedTokenAddress,
@@ -20,6 +27,11 @@ export type SettlementRequest = {
 };
 
 const USDC_DECIMALS = 6;
+const LAMPORTS_PER_SOL = 1_000_000_000;
+const FEE_BUFFER_LAMPORTS = 10_000;
+
+export const MIN_SOL_FOR_USDC_TRANSFER = 0.003;
+export const DEMO_TOP_UP_SOL_AMOUNT = 0.05;
 
 export async function prepareUsdcTransfer(request: SettlementRequest) {
   return {
@@ -79,6 +91,300 @@ export async function buildUsdcTransferTransaction(request: SettlementRequest) {
     destinationAta: destinationAta.toBase58(),
     rpcUrl: SOLANA_RPC_URL,
     mintAddress: DEVNET_USDC_MINT.toBase58(),
+  };
+}
+
+export async function sendCustodialUsdcTransfer({
+  request,
+  payerSecretKey,
+}: {
+  request: SettlementRequest;
+  payerSecretKey: Uint8Array;
+}) {
+  const payerKeypair = Keypair.fromSecretKey(payerSecretKey);
+
+  if (payerKeypair.publicKey.toBase58() !== request.senderWalletAddress) {
+    throw new Error("Encrypted payer wallet does not match the payer profile.");
+  }
+
+  const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+  const payer = payerKeypair.publicKey;
+  const recipient = new PublicKey(request.recipientWalletAddress);
+  const sourceAta = await getAssociatedTokenAddress(DEVNET_USDC_MINT, payer);
+  const destinationAta = await getAssociatedTokenAddress(DEVNET_USDC_MINT, recipient);
+  const transferAmount = usdcAmountToBaseUnits(request.amount);
+  const [payerLamports, sourceBalance, destinationAccountInfo, tokenAccountRent] =
+    await Promise.all([
+      connection.getBalance(payer),
+      connection.getTokenAccountBalance(sourceAta).catch(() => null),
+      connection.getAccountInfo(destinationAta),
+      connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE),
+    ]);
+
+  if (payerLamports === 0) {
+    throw new Error(
+      `Payer wallet ${payer.toBase58()} has no devnet SOL. Airdrop devnet SOL to pay transaction fees, then try again.`,
+    );
+  }
+
+  const requiredLamports =
+    FEE_BUFFER_LAMPORTS + (destinationAccountInfo ? 0 : tokenAccountRent);
+
+  if (payerLamports < requiredLamports) {
+    throw new Error(
+      `Payer wallet ${payer.toBase58()} only has ${(payerLamports / LAMPORTS_PER_SOL).toFixed(
+        6,
+      )} SOL. Add at least ${MIN_SOL_FOR_USDC_TRANSFER} devnet SOL so OTPay can pay fees${
+        destinationAccountInfo ? "" : " and create the recipient USDC token account"
+      }.`,
+    );
+  }
+
+  if (!sourceBalance) {
+    throw new Error(
+      `Payer wallet ${payer.toBase58()} does not have a devnet USDC token account for mint ${DEVNET_USDC_MINT.toBase58()}. Fund that wallet with devnet USDC first.`,
+    );
+  }
+
+  const sourceAmount = BigInt(sourceBalance.value.amount);
+
+  if (sourceAmount < transferAmount) {
+    throw new Error(
+      `Payer wallet ${payer.toBase58()} only has ${sourceBalance.value.uiAmountString} USDC, but this payment needs ${request.amount} USDC.`,
+    );
+  }
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+
+  const transaction = new Transaction({
+    feePayer: payer,
+    recentBlockhash: blockhash,
+  }).add(
+    createAssociatedTokenAccountIdempotentInstruction(
+      payer,
+      destinationAta,
+      recipient,
+      DEVNET_USDC_MINT,
+    ),
+    createTransferCheckedInstruction(
+      sourceAta,
+      DEVNET_USDC_MINT,
+      destinationAta,
+      payer,
+      transferAmount,
+      USDC_DECIMALS,
+    ),
+  );
+
+  transaction.sign(payerKeypair);
+
+  let signature: string;
+
+  try {
+    signature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+    });
+  } catch (error) {
+    if (error instanceof SendTransactionError) {
+      const logs = await error.getLogs(connection).catch(() => null);
+      throw new Error(
+        `${error.message}${logs?.length ? ` Logs: ${logs.join(" | ")}` : ""}`,
+      );
+    }
+
+    throw error;
+  }
+  const confirmation = await connection.confirmTransaction(
+    {
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    },
+    "confirmed",
+  );
+
+  if (confirmation.value.err) {
+    throw new Error(`Solana transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+  }
+
+  return {
+    signature,
+    sourceAta: sourceAta.toBase58(),
+    destinationAta: destinationAta.toBase58(),
+  };
+}
+
+function getKeypairFromBase64Secret(secretKey: string) {
+  const bytes = Buffer.from(secretKey, "base64");
+
+  if (bytes.length !== 64) {
+    throw new Error("OTPAY_DEVNET_TREASURY_SECRET_KEY must be a base64 encoded 64-byte Solana secret key.");
+  }
+
+  return Keypair.fromSecretKey(bytes);
+}
+
+export function getDevnetTreasuryKeypair() {
+  const secretKey = process.env.OTPAY_DEVNET_TREASURY_SECRET_KEY;
+
+  if (!secretKey) {
+    throw new Error("Demo treasury wallet is not configured. Set OTPAY_DEVNET_TREASURY_SECRET_KEY.");
+  }
+
+  return getKeypairFromBase64Secret(secretKey);
+}
+
+export async function airdropDevnetSol({
+  walletAddress,
+  solAmount,
+}: {
+  walletAddress: string;
+  solAmount: number;
+}) {
+  const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+  const recipient = new PublicKey(walletAddress);
+  const lamports = Math.round(solAmount * LAMPORTS_PER_SOL);
+
+  try {
+    const signature = await connection.requestAirdrop(recipient, lamports);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    const confirmation = await connection.confirmTransaction(
+      {
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      },
+      "confirmed",
+    );
+
+    if (confirmation.value.err) {
+      throw new Error(`Devnet SOL airdrop failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    return signature;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Devnet faucet is temporarily unavailable.";
+
+    throw new Error(
+      message.toLowerCase().includes("airdrop")
+        ? message
+        : `Devnet faucet is temporarily unavailable: ${message}`,
+    );
+  }
+}
+
+export async function sendTreasuryUsdcTopUp({
+  recipientWalletAddress,
+  amount,
+}: {
+  recipientWalletAddress: string;
+  amount: string | number;
+}) {
+  const treasuryKeypair = getDevnetTreasuryKeypair();
+  const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+  const treasury = treasuryKeypair.publicKey;
+  const recipient = new PublicKey(recipientWalletAddress);
+  const treasuryAta = await getAssociatedTokenAddress(DEVNET_USDC_MINT, treasury);
+  const recipientAta = await getAssociatedTokenAddress(DEVNET_USDC_MINT, recipient);
+  const transferAmount = usdcAmountToBaseUnits(amount);
+  const [treasuryLamports, treasuryBalance] = await Promise.all([
+    connection.getBalance(treasury),
+    connection.getTokenAccountBalance(treasuryAta).catch(() => null),
+  ]);
+
+  if (treasuryLamports === 0) {
+    throw new Error(
+      `Demo treasury wallet ${treasury.toBase58()} has no devnet SOL for token-transfer fees.`,
+    );
+  }
+
+  if (!treasuryBalance) {
+    throw new Error(
+      `Demo treasury wallet ${treasury.toBase58()} has no devnet USDC token account for mint ${DEVNET_USDC_MINT.toBase58()}.`,
+    );
+  }
+
+  if (BigInt(treasuryBalance.value.amount) < transferAmount) {
+    throw new Error(
+      `Demo treasury wallet only has ${treasuryBalance.value.uiAmountString} USDC, but this top-up needs ${amount} USDC.`,
+    );
+  }
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const transaction = new Transaction({
+    feePayer: treasury,
+    recentBlockhash: blockhash,
+  }).add(
+    createAssociatedTokenAccountIdempotentInstruction(
+      treasury,
+      recipientAta,
+      recipient,
+      DEVNET_USDC_MINT,
+    ),
+    createTransferCheckedInstruction(
+      treasuryAta,
+      DEVNET_USDC_MINT,
+      recipientAta,
+      treasury,
+      transferAmount,
+      USDC_DECIMALS,
+    ),
+  );
+
+  transaction.sign(treasuryKeypair);
+
+  let signature: string;
+
+  try {
+    signature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+    });
+  } catch (error) {
+    if (error instanceof SendTransactionError) {
+      const logs = await error.getLogs(connection).catch(() => null);
+      throw new Error(
+        `${error.message}${logs?.length ? ` Logs: ${logs.join(" | ")}` : ""}`,
+      );
+    }
+
+    throw error;
+  }
+
+  const confirmation = await connection.confirmTransaction(
+    {
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    },
+    "confirmed",
+  );
+
+  if (confirmation.value.err) {
+    throw new Error(`Demo USDC top-up failed: ${JSON.stringify(confirmation.value.err)}`);
+  }
+
+  return {
+    signature,
+    treasuryWalletAddress: treasury.toBase58(),
+    sourceAta: treasuryAta.toBase58(),
+    destinationAta: recipientAta.toBase58(),
+  };
+}
+
+export async function getDevnetWalletBalances(walletAddress: string) {
+  const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+  const owner = new PublicKey(walletAddress);
+  const usdcAta = await getAssociatedTokenAddress(DEVNET_USDC_MINT, owner);
+
+  const [lamports, usdcBalance] = await Promise.all([
+    connection.getBalance(owner).catch(() => null),
+    connection.getTokenAccountBalance(usdcAta).catch(() => null),
+  ]);
+
+  return {
+    sol: lamports === null ? null : lamports / 1_000_000_000,
+    usdc: usdcBalance?.value.uiAmount ?? null,
+    usdcAta: usdcAta.toBase58(),
   };
 }
 

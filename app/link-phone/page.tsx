@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getActiveProfileId } from "@/lib/auth/session-server";
-import { PrivyPhoneAuthCard } from "@/app/ui/privy-phone-auth-card";
+import { LinkPhoneForm } from "./link-phone-form";
 
 export default async function LinkPhonePage() {
   const activeProfileId = await getActiveProfileId();
@@ -26,10 +26,10 @@ export default async function LinkPhonePage() {
           Log in to dashboard
         </Link>
       </div>
-      <PrivyPhoneAuthCard mode="register" />
+      <LinkPhoneForm />
       <div className="rounded-[32px] border border-black/10 bg-white/70 p-6 text-sm leading-7 text-zinc-600 shadow-[0_18px_48px_rgba(8,17,9,0.06)]">
-        OTPay now uses Privy for SMS verification and Solana wallet provisioning.
-        Existing users are matched back to their OTPay profile by phone number.
+        Test mode logs the registration OTP in the server terminal and creates an
+        encrypted devnet wallet for the demo profile.
       </div>
     </main>
   );

@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { usePrivy } from "@privy-io/react-auth";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -459,7 +458,6 @@ function CelebrationModal({
 }
 
 export function LandingPage() {
-  const { authenticated, ready } = usePrivy();
   const rootRef = useRef<HTMLElement>(null);
   const [celebrationOpen, setCelebrationOpen] = useState(false);
 
@@ -530,9 +528,9 @@ export function LandingPage() {
           </a>
           <Link
             className="nav-link nav-social"
-            href={ready && authenticated ? "/dashboard" : "/link-phone"}
+            href="/link-phone"
           >
-            {ready && authenticated ? "Dashboard" : "Start"}
+            Start
           </Link>
         </div>
       </header>
@@ -558,9 +556,9 @@ export function LandingPage() {
           <div className="hero-actions js-hero-copy">
             <Link
               className="hero-primary-link"
-              href={ready && authenticated ? "/dashboard" : "/link-phone"}
+              href="/link-phone"
             >
-              {ready && authenticated ? "Open dashboard" : "Register phone number"}
+              Register phone number
             </Link>
             <a className="hero-secondary-link" href="#waitlist">
               Join waitlist

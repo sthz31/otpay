@@ -12,14 +12,13 @@ type RequestPaymentShellProps = {
   children: React.ReactNode;
 };
 
-type IconName = "activity" | "bell" | "dashboard" | "menu" | "settings" | "wallet" | "x";
+type IconName = "activity" | "menu" | "plus" | "shield" | "wallet" | "x";
 
 const navigation = [
-  { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
-  { label: "Requests", href: "/request-payment", icon: "bell" },
-  { label: "Activity", href: "/dashboard#activity", icon: "activity" },
-  { label: "Wallet", href: "/dashboard#wallet", icon: "wallet" },
-  { label: "Settings", href: "/dashboard#settings", icon: "settings" },
+  { label: "Wallet", href: "/dashboard", icon: "wallet" },
+  { label: "Pay requests", href: "/requests", icon: "shield" },
+  { label: "Request", href: "/request-payment", icon: "plus" },
+  { label: "Activity", href: "/activity", icon: "activity" },
 ] satisfies { label: string; href: string; icon: IconName }[];
 
 function initials(name: string) {
@@ -33,26 +32,11 @@ function initials(name: string) {
 
 function useActiveNavLabel() {
   const pathname = usePathname();
-  const [hash, setHash] = useState("");
 
-  useEffect(() => {
-    function syncHash() {
-      setHash(window.location.hash);
-    }
-
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-
-    return () => {
-      window.removeEventListener("hashchange", syncHash);
-    };
-  }, []);
-
-  if (pathname === "/request-payment") return "Requests";
-  if (pathname === "/dashboard" && hash === "#activity") return "Activity";
-  if (pathname === "/dashboard" && hash === "#wallet") return "Wallet";
-  if (pathname === "/dashboard" && hash === "#settings") return "Settings";
-  return "Dashboard";
+  if (pathname === "/request-payment") return "Request";
+  if (pathname === "/requests") return "Pay requests";
+  if (pathname === "/activity") return "Activity";
+  return "Wallet";
 }
 
 export function RequestPaymentShell({ activeProfile, children }: RequestPaymentShellProps) {
@@ -93,15 +77,15 @@ export function RequestPaymentShell({ activeProfile, children }: RequestPaymentS
         profile={activeProfile}
       />
 
-      <div className="mx-auto grid h-full w-full max-w-[1440px] overflow-hidden lg:grid-cols-[264px_minmax(0,1fr)]">
+      <div className="mx-auto grid h-full w-full max-w-[1440px] overflow-hidden lg:grid-cols-[244px_minmax(0,1fr)]">
         <Sidebar activeNavLabel={activeNavLabel} profile={activeProfile} />
 
         <main className="flex h-full min-w-0 flex-col overflow-hidden lg:p-4">
           <header className="hidden min-h-16 shrink-0 items-center justify-between gap-4 rounded-full border border-white/70 bg-white/76 px-5 shadow-[0_16px_34px_rgba(10,24,10,0.08)] backdrop-blur lg:flex">
             <div>
-              <p className="text-sm font-semibold text-[var(--foreground)]">Request payment</p>
+              <p className="text-sm font-semibold text-[var(--foreground)]">New request</p>
               <p className="text-xs font-medium text-[var(--muted)]">
-                Create a phone-number-native USDC request.
+                Ask a verified phone number for USDC.
               </p>
             </div>
             <Link
@@ -143,7 +127,7 @@ function Sidebar({
           </p>
           <p className="mt-2 text-sm font-bold text-[var(--foreground)]">Phone to USDC</p>
           <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-            Enter a verified number, amount, and note. OTPay handles the approval flow.
+            Create a request, enter the OTP, and settle on devnet.
           </p>
         </div>
         <div className="mt-auto grid gap-2.5 pt-5">
@@ -325,20 +309,6 @@ function Icon({ name }: { name: IconName }) {
   return (
     <svg aria-hidden="true" className="size-4 shrink-0" viewBox="0 0 24 24" {...common}>
       {name === "activity" ? <path d="M3 12h4l3 7 4-14 3 7h4" /> : null}
-      {name === "bell" ? (
-        <>
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-          <path d="M10 21h4" />
-        </>
-      ) : null}
-      {name === "dashboard" ? (
-        <>
-          <rect width="7" height="9" x="3" y="3" rx="1" />
-          <rect width="7" height="5" x="14" y="3" rx="1" />
-          <rect width="7" height="9" x="14" y="12" rx="1" />
-          <rect width="7" height="5" x="3" y="16" rx="1" />
-        </>
-      ) : null}
       {name === "menu" ? (
         <>
           <path d="M4 7h16" />
@@ -346,11 +316,14 @@ function Icon({ name }: { name: IconName }) {
           <path d="M4 17h16" />
         </>
       ) : null}
-      {name === "settings" ? (
+      {name === "plus" ? (
         <>
-          <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
-          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6l-.08.12a2 2 0 0 1-3.84 0L10 20a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1l-.12-.08a2 2 0 0 1 0-3.84L4 10a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6l.08-.12a2 2 0 0 1 3.84 0L14 4a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.08.36.28.7.6 1l.12.08a2 2 0 0 1 0 3.84L20 14a1.7 1.7 0 0 0-.6 1Z" />
+          <path d="M12 5v14" />
+          <path d="M5 12h14" />
         </>
+      ) : null}
+      {name === "shield" ? (
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
       ) : null}
       {name === "wallet" ? (
         <>

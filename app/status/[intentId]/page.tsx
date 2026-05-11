@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getActiveProfileId } from "@/lib/auth/session-server";
+import { getSolscanDevnetTransactionUrl } from "@/lib/solana/explorer";
 import { getPaymentIntentById } from "@/lib/supabase/otpay-queries";
 
 function formatAmount(amount: number) {
@@ -19,13 +20,24 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function truncateAddress(value?: string | null) {
+  if (!value) return "No wallet";
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+}
+
+const pillLinkClassName =
+  "inline-flex min-h-10 w-fit items-center rounded-full border border-black/10 bg-white/70 px-4 text-sm font-bold text-[var(--foreground)] transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2";
+
+const primaryButtonClassName =
+  "inline-flex min-h-11 items-center justify-center rounded-full bg-[linear-gradient(180deg,#00e95a_0%,#00c84b_100%)] px-5 text-sm font-extrabold text-[var(--foreground)] shadow-[0_10px_24px_rgba(0,214,79,0.18)] transition hover:brightness-105 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2";
+
 const statusCopy: Record<string, string> = {
-  pending: "Waiting for the payer to verify the OTP and approve the request.",
-  approved: "Payer approved the request. They still need to sign and send the Solana transfer.",
+  pending: "Waiting for OTP confirmation.",
+  approved: "OTP was approved, but no transaction signature is recorded yet.",
   rejected: "Payer rejected the request. No funds should move.",
-  settling: "Settlement has been prepared and is waiting to be signed and sent.",
-  settled: "Settlement completed and this request is finished.",
-  failed: "Settlement failed and needs a retry path.",
+  settling: "Settlement is in progress.",
+  settled: "Payment settled on Solana devnet.",
+  failed: "Settlement failed. Try again or create a new request.",
 };
 
 export default async function StatusPage({
@@ -55,7 +67,7 @@ export default async function StatusPage({
           <div className="mt-6">
             <Link
               href="/dashboard"
-              className="primary-dark-button inline-flex min-h-11 items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition"
+              className={primaryButtonClassName}
             >
               Back to dashboard
             </Link>
@@ -73,90 +85,104 @@ export default async function StatusPage({
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-16">
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6 lg:py-12">
       <div className="flex flex-wrap gap-3">
-        <Link
-          href="/dashboard"
-          className="inline-flex w-fit items-center rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-white"
-        >
-          ← Back to dashboard
+        <Link href="/dashboard" className={pillLinkClassName}>
+          Back to wallet
         </Link>
         {intent.status === "pending" ? (
-          <Link
-            href={`/approve/${intent.id}`}
-            className="inline-flex w-fit items-center rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-white"
-          >
+          <Link href={`/approve/${intent.id}`} className={pillLinkClassName}>
             Approval page
           </Link>
         ) : null}
       </div>
 
-      <section className="rounded-[32px] border border-black/10 bg-white/90 p-8 shadow-[0_24px_64px_rgba(8,17,9,0.08)]">
-        <p className="text-sm uppercase tracking-[0.18em] text-zinc-500">Step 4</p>
-        <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-950">
-          Settlement status
+      <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_64px_rgba(8,17,9,0.08)] sm:p-8">
+        <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Payment status</p>
+        <h1 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-[var(--foreground)]">
+          {intent.status === "settled" ? "Payment complete" : "Payment pending"}
         </h1>
-        <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
-          This page gives judges the quick proof they need: who requested payment,
-          who pays it, who receives it, the approval state, and whether on-chain settlement still
-          needs to happen.
+        <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--muted)]">
+          Track the request, payer, payee, and devnet transaction proof.
         </p>
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
-          <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Status</p>
-            <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950">
+          <div className="rounded-[28px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-5">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Status</p>
+            <p className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground)]">
               {intent.status}
             </p>
-            <p className="mt-2 text-sm text-zinc-600">{statusCopy[intent.status]}</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">{statusCopy[intent.status]}</p>
           </div>
 
-          <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Amount</p>
-            <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950">
+          <div className="rounded-[28px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-5">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Amount</p>
+            <p className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground)]">
               {formatAmount(intent.amount)} {intent.currency}
             </p>
-            <p className="mt-2 text-sm text-zinc-600">Created {formatDate(intent.created_at)}</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">Created {formatDate(intent.created_at)}</p>
           </div>
 
-          <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Transaction proof</p>
-            <p className="mt-3 break-all font-mono text-xs text-zinc-950">
-              {intent.transaction_signature ?? "Not settled on-chain yet"}
-            </p>
+          <div className="rounded-[28px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-5">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Transaction proof</p>
+            {intent.transaction_signature ? (
+              <>
+                <a
+                  href={getSolscanDevnetTransactionUrl(intent.transaction_signature)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 block break-all font-mono text-xs font-semibold text-[var(--foreground)] underline decoration-lime-500/50 underline-offset-4 transition hover:text-lime-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2"
+                >
+                  {intent.transaction_signature}
+                </a>
+                <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
+                  Open devnet transaction on Solscan
+                </p>
+              </>
+            ) : (
+              <p className="mt-3 break-all font-mono text-xs text-[var(--foreground)]">
+                No devnet transaction yet
+              </p>
+            )}
           </div>
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Payer</p>
-            <p className="mt-3 text-xl font-semibold text-zinc-950">
+          <div className="min-w-0 rounded-[28px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-5">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Payer</p>
+            <p className="mt-3 truncate text-xl font-semibold text-[var(--foreground)]">
               {intent.sender_display_name ?? "Unknown sender"}
             </p>
-            <p className="mt-2 font-mono text-xs text-zinc-500">
-              {intent.payer_phone_number ?? intent.sender_phone_number ?? "No phone"} ·{" "}
-              {intent.sender_wallet_address}
+            <p className="mt-2 truncate font-mono text-xs text-[var(--muted)]">
+              {intent.payer_phone_number ?? intent.sender_phone_number ?? "No phone"}
+            </p>
+            <p className="mt-1 truncate font-mono text-xs text-[var(--muted)]">
+              {truncateAddress(intent.sender_wallet_address)}
             </p>
           </div>
 
-          <div className="rounded-[28px] border border-zinc-200 bg-zinc-50 p-5">
-            <p className="text-sm uppercase tracking-[0.14em] text-zinc-500">Requester / Payee</p>
-            <p className="mt-3 text-xl font-semibold text-zinc-950">
+          <div className="min-w-0 rounded-[28px] border border-black/10 bg-[rgba(245,255,244,0.72)] p-5">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">Requester / Payee</p>
+            <p className="mt-3 truncate text-xl font-semibold text-[var(--foreground)]">
               {intent.recipient_display_name ?? "Unknown recipient"}
             </p>
-            <p className="mt-2 font-mono text-xs text-zinc-500">
-              {intent.resolved_recipient_phone_number ?? "No phone"} · {intent.recipient_wallet_address}
+            <p className="mt-2 truncate font-mono text-xs text-[var(--muted)]">
+              {intent.resolved_recipient_phone_number ?? "No phone"}
+            </p>
+            <p className="mt-1 truncate font-mono text-xs text-[var(--muted)]">
+              {truncateAddress(intent.recipient_wallet_address)}
             </p>
           </div>
         </div>
 
-        <div className="mt-6 rounded-[28px] border border-lime-200 bg-lime-50 p-5 text-sm text-lime-950">
-          <p className="font-semibold">Next build step</p>
-          <p className="mt-2">
-            Once a request reaches <span className="font-semibold">approved</span>, the payer signs
-            from the approval page and OTPay records the devnet Solana signature here.
-          </p>
-        </div>
+        {intent.status !== "settled" ? (
+          <div className="mt-6 rounded-[28px] border border-lime-200 bg-lime-50 p-5 text-sm text-lime-950">
+            <p className="font-semibold">Next step</p>
+            <p className="mt-2">
+              Enter the request OTP to send devnet USDC and record the transaction signature.
+            </p>
+          </div>
+        ) : null}
       </section>
     </main>
   );

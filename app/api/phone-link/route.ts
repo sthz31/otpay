@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { Keypair } from "@solana/web3.js";
+import { createOtp, hashPhoneOtp } from "@/lib/auth/otp";
+import { createEncryptedTestWallet } from "@/lib/solana/custodial-wallet";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { phoneLinkStartSchema } from "@/lib/validation/payment-intent";
 
@@ -19,6 +20,8 @@ export async function POST(request: Request) {
 
   const supabase = getSupabaseServerClient();
   const normalizedPhoneNumber = parsed.data.phoneNumber.trim();
+  const otp = createOtp();
+  const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
   const { data: existingPhoneLink, error: existingPhoneLinkError } = await supabase
     .from("phone_links")
@@ -41,6 +44,18 @@ export async function POST(request: Request) {
   }
 
   if (existingPhoneLink && !existingPhoneLink.is_verified) {
+    const { error: otpUpdateError } = await supabase
+      .from("phone_links")
+      .update({
+        otp_hash: hashPhoneOtp(normalizedPhoneNumber, otp),
+        otp_expires_at: otpExpiresAt,
+      })
+      .eq("id", existingPhoneLink.id);
+
+    if (otpUpdateError) {
+      return NextResponse.json({ error: otpUpdateError.message }, { status: 500 });
+    }
+
     const { data: existingPendingLink, error: existingPendingLinkError } = await supabase
       .from("phone_links")
       .select("id, phone_number, is_verified, profile_id")
@@ -60,7 +75,7 @@ export async function POST(request: Request) {
 
     const { data: existingProfile, error: existingProfileError } = await supabase
       .from("profiles")
-      .select("id, display_name, wallet_address")
+      .select("id, display_name, wallet_address, encrypted_wallet_secret")
       .eq("id", existingPendingLink.profile_id)
       .single();
 
@@ -75,23 +90,89 @@ export async function POST(request: Request) {
       );
     }
 
+    let pendingProfile = existingProfile;
+
+    if (!existingProfile.encrypted_wallet_secret) {
+      let testWallet: ReturnType<typeof createEncryptedTestWallet>;
+
+      try {
+        testWallet = createEncryptedTestWallet();
+      } catch (walletError) {
+        return NextResponse.json(
+          {
+            error:
+              walletError instanceof Error
+                ? walletError.message
+                : "Could not create the test wallet.",
+          },
+          { status: 500 },
+        );
+      }
+
+      const { data: updatedProfile, error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          wallet_address: testWallet.walletAddress,
+          encrypted_wallet_secret: testWallet.encryptedWalletSecret,
+        })
+        .eq("id", existingProfile.id)
+        .select("id, display_name, wallet_address, encrypted_wallet_secret")
+        .single();
+
+      if (updateError || !updatedProfile) {
+        return NextResponse.json(
+          {
+            error:
+              updateError?.message ??
+              "Could not attach a test wallet to the pending profile.",
+          },
+          { status: 500 },
+        );
+      }
+
+      pendingProfile = updatedProfile;
+    }
+
+    console.log(
+      `[OTPay test auth] Registration OTP ${otp} for ${normalizedPhoneNumber} expires at ${otpExpiresAt}`,
+    );
+
     return NextResponse.json({
       ok: true,
       message: "Pending registration found. Continue with OTP verification.",
       data: {
-        profile: existingProfile,
+        profile: {
+          id: pendingProfile.id,
+          display_name: pendingProfile.display_name,
+          wallet_address: pendingProfile.wallet_address,
+        },
         phoneLink: existingPendingLink,
       },
     });
   }
 
-  const generatedWalletAddress = Keypair.generate().publicKey.toBase58();
+  let testWallet: ReturnType<typeof createEncryptedTestWallet>;
+
+  try {
+    testWallet = createEncryptedTestWallet();
+  } catch (walletError) {
+    return NextResponse.json(
+      {
+        error:
+          walletError instanceof Error
+            ? walletError.message
+            : "Could not create the test wallet.",
+      },
+      { status: 500 },
+    );
+  }
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .insert({
       display_name: parsed.data.displayName.trim(),
-      wallet_address: generatedWalletAddress,
+      wallet_address: testWallet.walletAddress,
+      encrypted_wallet_secret: testWallet.encryptedWalletSecret,
     })
     .select("id, display_name, wallet_address")
     .single();
@@ -109,6 +190,8 @@ export async function POST(request: Request) {
       profile_id: profile.id,
       phone_number: normalizedPhoneNumber,
       is_verified: false,
+      otp_hash: hashPhoneOtp(normalizedPhoneNumber, otp),
+      otp_expires_at: otpExpiresAt,
     })
     .select("id, phone_number, is_verified")
     .single();
@@ -121,6 +204,10 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+
+  console.log(
+    `[OTPay test auth] Registration OTP ${otp} for ${normalizedPhoneNumber} expires at ${otpExpiresAt}`,
+  );
 
   return NextResponse.json({
     ok: true,

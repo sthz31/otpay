@@ -2,6 +2,10 @@ const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioFromNumber = process.env.TWILIO_FROM_NUMBER;
 
+export function isSmsEnabled() {
+  return process.env.OTPAY_SMS_ENABLED === "true";
+}
+
 export function isTwilioConfigured() {
   return Boolean(twilioAccountSid && twilioAuthToken && twilioFromNumber);
 }
@@ -21,6 +25,13 @@ export async function sendPaymentOtpSms({
   otp: string;
   approvalUrl: string;
 }) {
+  if (!isSmsEnabled()) {
+    console.log(
+      `[OTPay test SMS disabled] Payment OTP ${otp} for ${to}. Approval link: ${approvalUrl}`,
+    );
+    return;
+  }
+
   if (!twilioAccountSid || !twilioAuthToken || !twilioFromNumber) {
     throw new Error("Twilio SMS is not configured.");
   }

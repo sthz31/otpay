@@ -226,7 +226,7 @@ export function LinkPhoneForm() {
           <div className="rounded-3xl border border-lime-200 bg-lime-50 px-5 py-4 text-sm text-lime-950">
             <p className="font-semibold">Registration created.</p>
             <p className="mt-2">
-              Enter the one-time code sent to{" "}
+              Enter the one-time code logged in the server terminal for{" "}
               <span className="font-mono">{currentPhoneNumber}</span>.
             </p>
           </div>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { hashPin } from "@/lib/auth/pin";
+import { ACTIVE_PROFILE_COOKIE } from "@/lib/auth/session";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { phoneLinkPinSchema } from "@/lib/validation/payment-intent";
 
@@ -55,11 +56,21 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     message: "PIN saved successfully.",
     data: {
       profile,
     },
   });
+
+  response.cookies.set(ACTIVE_PROFILE_COOKIE, profile.id, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+
+  return response;
 }

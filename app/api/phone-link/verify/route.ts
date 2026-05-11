@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { verifyPhoneOtp } from "@/lib/auth/otp";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { phoneLinkVerifySchema } from "@/lib/validation/payment-intent";
 
@@ -16,18 +17,11 @@ export async function POST(request: Request) {
     );
   }
 
-  if (parsed.data.otp !== "6789") {
-    return NextResponse.json(
-      { error: "Invalid demo OTP. Use 6789 for the current hackathon build." },
-      { status: 401 },
-    );
-  }
-
   const supabase = getSupabaseServerClient();
 
   const { data: phoneLink, error: phoneLinkLookupError } = await supabase
     .from("phone_links")
-    .select("id, phone_number, is_verified, profile_id")
+    .select("id, phone_number, is_verified, profile_id, otp_hash, otp_expires_at")
     .eq("phone_number", parsed.data.phoneNumber)
     .maybeSingle();
 
@@ -45,9 +39,32 @@ export async function POST(request: Request) {
     );
   }
 
+  if (
+    phoneLink.otp_expires_at &&
+    new Date(phoneLink.otp_expires_at).getTime() < Date.now()
+  ) {
+    return NextResponse.json(
+      { error: "This OTP has expired. Start registration again." },
+      { status: 401 },
+    );
+  }
+
+  if (
+    !verifyPhoneOtp({
+      phoneNumber: phoneLink.phone_number,
+      otp: parsed.data.otp,
+      otpHash: phoneLink.otp_hash,
+    })
+  ) {
+    return NextResponse.json(
+      { error: "Invalid registration OTP. Check the server terminal for the test code." },
+      { status: 401 },
+    );
+  }
+
   const { data: updatedPhoneLink, error: phoneLinkError } = await supabase
     .from("phone_links")
-    .update({ is_verified: true })
+    .update({ is_verified: true, otp_hash: null, otp_expires_at: null })
     .eq("id", phoneLink.id)
     .select("id, phone_number, is_verified, profile_id")
     .single();

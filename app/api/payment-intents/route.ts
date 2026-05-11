@@ -3,6 +3,10 @@ import { randomUUID } from "crypto";
 import { createOtp, hashPaymentOtp } from "@/lib/auth/otp";
 import { getActiveProfileId } from "@/lib/auth/session-server";
 import { sendPaymentOtpSms } from "@/lib/sms/twilio";
+import {
+  MIN_SOL_FOR_USDC_TRANSFER,
+  getDevnetWalletBalances,
+} from "@/lib/solana/usdc";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { paymentIntentSchema } from "@/lib/validation/payment-intent";
 
@@ -76,6 +80,77 @@ export async function POST(request: Request) {
     );
   }
 
+  const { data: payerProfile, error: payerProfileError } = await supabase
+    .from("profiles")
+    .select("id, wallet_address")
+    .eq("id", payerPhoneLink.profile_id)
+    .maybeSingle();
+
+  if (payerProfileError) {
+    return NextResponse.json({ error: payerProfileError.message }, { status: 500 });
+  }
+
+  if (!payerProfile?.wallet_address) {
+    return NextResponse.json(
+      { error: "Payer wallet is missing. Ask the payer to re-register this test account." },
+      { status: 409 },
+    );
+  }
+
+  let payerBalances: Awaited<ReturnType<typeof getDevnetWalletBalances>>;
+
+  try {
+    payerBalances = await getDevnetWalletBalances(payerProfile.wallet_address);
+  } catch (balanceError) {
+    return NextResponse.json(
+      {
+        error:
+          balanceError instanceof Error
+            ? `Could not check payer devnet USDC balance: ${balanceError.message}`
+            : "Could not check payer devnet USDC balance.",
+      },
+      { status: 502 },
+    );
+  }
+
+  const payerUsdcBalance = payerBalances.usdc ?? 0;
+  const payerSolBalance = payerBalances.sol ?? 0;
+
+  if (payerUsdcBalance < amount) {
+    return NextResponse.json(
+      {
+        error: `Payer only has ${payerUsdcBalance.toLocaleString(undefined, {
+          maximumFractionDigits: 6,
+        })} USDC on devnet, but this request needs ${amount.toLocaleString(undefined, {
+          maximumFractionDigits: 6,
+        })} USDC.`,
+        data: {
+          payerWalletAddress: payerProfile.wallet_address,
+          payerUsdcBalance,
+          requestedAmount: amount,
+          usdcTokenAccount: payerBalances.usdcAta,
+        },
+      },
+      { status: 409 },
+    );
+  }
+
+  if (payerSolBalance < MIN_SOL_FOR_USDC_TRANSFER) {
+    return NextResponse.json(
+      {
+        error: `Payer only has ${payerSolBalance.toLocaleString(undefined, {
+          maximumFractionDigits: 6,
+        })} SOL on devnet. Add at least ${MIN_SOL_FOR_USDC_TRANSFER} devnet SOL to pay transaction fees before creating this request.`,
+        data: {
+          payerWalletAddress: payerProfile.wallet_address,
+          payerSolBalance,
+          minimumSolRequired: MIN_SOL_FOR_USDC_TRANSFER,
+        },
+      },
+      { status: 409 },
+    );
+  }
+
   const intentId = randomUUID();
   const approvalOtp = createOtp();
   const approvalUrlBase =
@@ -132,12 +207,6 @@ export async function POST(request: Request) {
             : "Could not send the payment OTP. No request was created.",
       },
       { status: 502 },
-    );
-  }
-
-  if (process.env.NODE_ENV !== "production") {
-    console.log(
-      `[OTPay] Dev OTP ${approvalOtp} sent to ${payerPhoneLink.phone_number} for payment intent ${paymentIntent.id}`,
     );
   }
 

@@ -1,7 +1,7 @@
-import { loadDashboardData } from "./dashboard-data";
-import { DashboardShell } from "./dashboard-shell";
+import { loadDashboardData } from "@/app/dashboard/dashboard-data";
+import { DashboardShell } from "@/app/dashboard/dashboard-shell";
 
-export default async function DashboardPage() {
+export default async function RequestsPage() {
   const { balances, outstandingIncoming, recentIntents, selectedProfile } =
     await loadDashboardData();
 
@@ -11,7 +11,7 @@ export default async function DashboardPage() {
       balances={balances}
       recentIntents={recentIntents}
       outstandingIncoming={outstandingIncoming}
-      view="wallet"
+      view="requests"
     />
   );
 }

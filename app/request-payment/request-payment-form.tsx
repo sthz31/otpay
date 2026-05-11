@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { getSolscanDevnetTransactionUrl } from "@/lib/solana/explorer";
 import type { ProfileSummary } from "@/lib/supabase/otpay-queries";
 
 type RequestPaymentFormProps = {
@@ -13,14 +13,14 @@ type RequestPaymentResponse = {
   ok: boolean;
   message?: string;
   data?: {
-      paymentIntent: {
-        id: string;
-        status: string;
-        recipient_phone_number: string;
-        payer_phone_number?: string | null;
-        amount: number;
-        currency: string;
-        note: string | null;
+    paymentIntent: {
+      id: string;
+      status: string;
+      recipient_phone_number: string;
+      payer_phone_number?: string | null;
+      amount: number;
+      currency: string;
+      note: string | null;
       transaction_signature?: string | null;
     };
     senderProfile: {
@@ -49,7 +49,6 @@ const inputClassName =
   "min-h-13 rounded-2xl border border-black/10 bg-white px-4 py-3 text-base font-normal text-[var(--foreground)] outline-none transition placeholder:text-[rgba(85,112,92,0.72)] focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2";
 
 export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
-  const { getAccessToken } = usePrivy();
   const [form, setForm] = useState<FormState>({
     recipientPhoneNumber: "",
     amount: "",
@@ -62,8 +61,11 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
   const [confirming, setConfirming] = useState(false);
   const [otpDialogOpen, setOtpDialogOpen] = useState(false);
   const otpInputRef = useRef<HTMLInputElement>(null);
+  const otpTriggerRef = useRef<HTMLButtonElement>(null);
 
   const hasPendingConfirmation = Boolean(success && success.paymentIntent.status !== "settled");
+  const settledSignature =
+    success?.transactionSignature ?? success?.paymentIntent.transaction_signature ?? null;
 
   useEffect(() => {
     if (!otpDialogOpen) return;
@@ -71,6 +73,7 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setOtpDialogOpen(false);
+        otpTriggerRef.current?.focus();
       }
     }
 
@@ -84,19 +87,6 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
     };
   }, [otpDialogOpen]);
 
-  async function buildAuthHeaders() {
-    const accessToken = await getAccessToken();
-
-    if (!accessToken) {
-      throw new Error("Privy session missing. Please log in again.");
-    }
-
-    return {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    };
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -108,7 +98,9 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
     try {
       response = await fetch("/api/payment-intents", {
         method: "POST",
-        headers: await buildAuthHeaders(),
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           recipientPhoneNumber: form.recipientPhoneNumber,
           amount: form.amount,
@@ -162,7 +154,9 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
     try {
       response = await fetch(`/api/payment-intents/${success.paymentIntent.id}/verify-otp`, {
         method: "POST",
-        headers: await buildAuthHeaders(),
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           otp: confirmationOtp,
         }),
@@ -197,11 +191,10 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
         Request flow
       </p>
       <h1 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-[var(--foreground)]">
-        Request a payment
+        Request USDC
       </h1>
       <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--muted)]">
-        Request USDC from a phone number. OTPay sends the payer an OTP and approval
-        link, then the payer signs the Solana transfer from their own wallet.
+        Enter the payer phone number and amount. OTPay logs a demo OTP, then a correct OTP sends USDC on devnet.
       </p>
 
       <form className="mt-8 grid gap-4" onSubmit={handleSubmit}>
@@ -276,7 +269,7 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
           aria-busy={submitting}
           className={`${primaryButtonClassName} mt-2 w-full sm:w-fit`}
         >
-          {submitting ? "Creating request..." : "Create payment request"}
+          {submitting ? "Creating request..." : "Request payment"}
         </button>
       </form>
 
@@ -284,15 +277,16 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
         <div className="mt-8 rounded-[28px] border border-[rgba(0,214,79,0.22)] bg-[var(--accent-soft)] px-5 py-5 text-sm text-[var(--foreground)]">
           <p className="font-semibold">
             {success.paymentIntent.status === "settled"
-              ? "Transaction confirmed."
-              : "Request created."}
+              ? "Payment sent."
+              : "Request ready."}
           </p>
-          <p className="mt-2">
-            Intent <span className="font-mono">{success.paymentIntent.id}</span> is now{" "}
-            <span className="font-semibold">{success.paymentIntent.status}</span>.
+          <p className="mt-2 leading-6">
+            {success.paymentIntent.status === "settled"
+              ? "The devnet transfer is confirmed."
+              : "Enter the OTP from the terminal to send the payment now."}
           </p>
-          <p className="mt-1">
-            Payer{" "}
+          <p className="mt-1 text-[var(--muted)]">
+            Payer:{" "}
             <span className="font-mono">
               {success.paymentIntent.payer_phone_number ??
                 success.paymentIntent.recipient_phone_number}
@@ -301,19 +295,26 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
           {hasPendingConfirmation ? (
             <div className="mt-5 flex flex-wrap gap-3">
               <button
+                ref={otpTriggerRef}
                 type="button"
                 onClick={() => setOtpDialogOpen(true)}
                 className={primaryButtonClassName}
               >
-                Enter OTP
+                Enter OTP and send
               </button>
             </div>
           ) : (
             <>
-              <p className="mt-2 font-mono text-xs text-lime-900/80">
-                Transaction signature:{" "}
-                {success.transactionSignature ?? success.paymentIntent.transaction_signature}
-              </p>
+              {settledSignature ? (
+                <a
+                  href={getSolscanDevnetTransactionUrl(settledSignature)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 block break-all font-mono text-xs font-semibold text-lime-950 underline decoration-lime-700/40 underline-offset-4 transition hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2"
+                >
+                  Transaction signature: {settledSignature}
+                </a>
+              ) : null}
               <div className="mt-5 flex flex-wrap gap-3">
                 <Link
                   href={`/status/${success.paymentIntent.id}`}
@@ -321,6 +322,16 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
                 >
                   View request status
                 </Link>
+                {settledSignature ? (
+                  <a
+                    href={getSolscanDevnetTransactionUrl(settledSignature)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={secondaryButtonClassName}
+                  >
+                    View on Solscan
+                  </a>
+                ) : null}
                 <Link
                   href="/dashboard"
                   className={secondaryButtonClassName}
@@ -335,14 +346,17 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
 
       {success && hasPendingConfirmation && otpDialogOpen ? (
         <div
-          className="fixed inset-0 z-50 grid place-items-center bg-[rgba(5,17,6,0.38)] px-4 py-6 backdrop-blur-sm"
+          className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[rgba(5,17,6,0.38)] px-4 py-6 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-labelledby="otp-dialog-title"
-          onClick={() => setOtpDialogOpen(false)}
+          onClick={() => {
+            setOtpDialogOpen(false);
+            otpTriggerRef.current?.focus();
+          }}
         >
           <div
-            className="w-full max-w-md rounded-[32px] border border-white/70 bg-[rgba(245,255,244,0.98)] p-5 shadow-[0_28px_90px_rgba(8,17,9,0.22)] sm:p-6"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-[32px] border border-white/70 bg-[rgba(245,255,244,0.98)] p-5 shadow-[0_28px_90px_rgba(8,17,9,0.22)] sm:p-6"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -354,38 +368,42 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
                   id="otp-dialog-title"
                   className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]"
                 >
-                  Confirm recipient OTP
+                  Confirm payer OTP
                 </h2>
               </div>
               <button
                 type="button"
                 aria-label="Close OTP dialog"
-                onClick={() => setOtpDialogOpen(false)}
+                onClick={() => {
+                  setOtpDialogOpen(false);
+                  otpTriggerRef.current?.focus();
+                }}
                 className="inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--foreground)] transition hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
               >
-                X
+                <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
               </button>
             </div>
 
             <div className="mt-5 rounded-[24px] border border-[rgba(0,214,79,0.22)] bg-white/72 px-4 py-4 text-sm text-[var(--muted)]">
-              <p className="font-semibold text-[var(--foreground)]">Recipient confirmation required</p>
+              <p className="font-semibold text-[var(--foreground)]">Payer confirmation required</p>
               <p className="mt-2 leading-6">
-                OTP was sent to the payer. Entering it here marks the request approved,
-                but the payer still needs to open OTPay and sign before settlement.
-              </p>
-              <p className="mt-2 truncate font-mono text-xs">
-                Intent {success.paymentIntent.id}
+                Use the OTP from the server terminal. A correct OTP immediately sends devnet USDC.
               </p>
             </div>
 
             <form className="mt-5 grid gap-4" onSubmit={handleConfirmTransaction}>
               <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">
-                Recipient OTP
+                Payer OTP
                 <input
                   ref={otpInputRef}
                   className={`${inputClassName} text-center font-mono text-xl tracking-[0.28em]`}
                   value={confirmationOtp}
-                  onChange={(event) => setConfirmationOtp(event.target.value)}
+                  onChange={(event) =>
+                    setConfirmationOtp(event.target.value.replace(/\D/g, "").slice(0, 4))
+                  }
                   placeholder="0000"
                   type="text"
                   inputMode="numeric"
@@ -405,15 +423,18 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <button
                   type="submit"
-                  disabled={confirming}
+                  disabled={confirming || confirmationOtp.length !== 4}
                   aria-busy={confirming}
                   className={primaryButtonClassName}
                 >
-                  {confirming ? "Confirming..." : "Confirm with OTP"}
+                  {confirming ? "Sending..." : "Confirm OTP and send"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setOtpDialogOpen(false)}
+                  onClick={() => {
+                    setOtpDialogOpen(false);
+                    otpTriggerRef.current?.focus();
+                  }}
                   className={secondaryButtonClassName}
                 >
                   Cancel

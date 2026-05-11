@@ -21,13 +21,8 @@ export default async function RequestPaymentPage() {
 
   return (
     <RequestPaymentShell activeProfile={selectedProfile}>
-      <div className="mx-auto grid w-full max-w-5xl gap-6">
+      <div className="mx-auto grid w-full max-w-3xl gap-6">
         <RequestPaymentForm activeProfile={selectedProfile} />
-
-        <div className="rounded-[32px] border border-black/10 bg-white/70 p-6 text-sm leading-7 text-zinc-600 shadow-[0_18px_48px_rgba(8,17,9,0.06)]">
-          This request screen uses the authenticated Privy profile from the current
-          session, so OTPay always creates requests from the verified phone-linked user.
-        </div>
       </div>
     </RequestPaymentShell>
   );

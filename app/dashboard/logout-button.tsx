@@ -1,8 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useLogout } from "@privy-io/react-auth";
-import { ACTIVE_PROFILE_STORAGE_KEY } from "@/lib/auth/session";
+import { ACTIVE_PROFILE_COOKIE, ACTIVE_PROFILE_STORAGE_KEY } from "@/lib/auth/session";
 
 type LogoutButtonProps = {
   className?: string;
@@ -10,12 +9,11 @@ type LogoutButtonProps = {
 
 export function LogoutButton({ className }: LogoutButtonProps) {
   const router = useRouter();
-  const { logout } = useLogout();
 
   async function handleLogout() {
     window.localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY);
-    document.cookie = "privy-token=; path=/; max-age=0; samesite=lax";
-    await logout();
+    document.cookie = `${ACTIVE_PROFILE_COOKIE}=; path=/; max-age=0; samesite=lax`;
+    await fetch("/api/auth/logout", { method: "POST" });
     router.replace("/");
     router.refresh();
   }

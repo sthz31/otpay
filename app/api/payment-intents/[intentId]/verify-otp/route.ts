@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { DEVNET_USDC_MINT, sendCustodialUsdcTransfer } from "@/lib/solana/usdc";
 import { verifyPaymentOtp } from "@/lib/auth/otp";
 import { getActiveProfileId } from "@/lib/auth/session-server";
+import { decryptWalletSecret } from "@/lib/solana/custodial-wallet";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { paymentIntentConfirmSchema } from "@/lib/validation/payment-intent";
 
@@ -32,7 +34,7 @@ export async function POST(
   const { data: paymentIntent, error: paymentIntentError } = await supabase
     .from("payment_intents")
     .select(
-      "id, status, approval_otp_hash, approval_otp_expires_at, sender_profile_id, recipient_profile_id, approval_method, approved_by_profile_id",
+      "id, status, amount, currency, approval_otp_hash, approval_otp_expires_at, sender_profile_id, recipient_profile_id, approval_method, approved_by_profile_id, transaction_signature",
     )
     .eq("id", intentId)
     .maybeSingle();
@@ -46,7 +48,15 @@ export async function POST(
   }
 
   if (paymentIntent.status === "settled") {
-    return NextResponse.json({ error: "This payment request is already settled." }, { status: 409 });
+    return NextResponse.json({
+      ok: true,
+      message: "This payment request is already settled.",
+      data: {
+        paymentIntent,
+        transactionSignature: paymentIntent.transaction_signature,
+        canSettle: false,
+      },
+    });
   }
 
   if (paymentIntent.status !== "pending" && paymentIntent.status !== "approved") {
@@ -86,32 +96,71 @@ export async function POST(
   const approvalMethod =
     paymentIntent.sender_profile_id === activeProfileId ? "payer_link" : "shared_otp";
 
-  if (paymentIntent.status === "approved" && paymentIntent.approval_method === "payer_link") {
-    if (paymentIntent.sender_profile_id !== activeProfileId) {
-      return NextResponse.json(
-        { error: "The payer has already approved this request for settlement." },
-        { status: 409 },
-      );
-    }
+  const { data: payerProfile, error: payerError } = await supabase
+    .from("profiles")
+    .select("id, wallet_address, encrypted_wallet_secret")
+    .eq("id", paymentIntent.sender_profile_id)
+    .maybeSingle();
 
-    return NextResponse.json({
-      ok: true,
-      message: "OTP already verified. Sign and send the USDC transfer next.",
-      data: {
-        paymentIntent,
-        canSettle: true,
-      },
-    });
+  if (payerError) {
+    return NextResponse.json({ error: payerError.message }, { status: 500 });
   }
 
+  const { data: requesterProfile, error: requesterError } = await supabase
+    .from("profiles")
+    .select("id, wallet_address")
+    .eq("id", paymentIntent.recipient_profile_id)
+    .maybeSingle();
+
+  if (requesterError) {
+    return NextResponse.json({ error: requesterError.message }, { status: 500 });
+  }
+
+  if (!payerProfile || !requesterProfile) {
+    return NextResponse.json({ error: "Could not find payer or requester wallet." }, { status: 404 });
+  }
+
+  if (!payerProfile.encrypted_wallet_secret) {
+    return NextResponse.json(
+      { error: "Payer test wallet secret is missing. Re-register this test user." },
+      { status: 409 },
+    );
+  }
+
+  let transfer: Awaited<ReturnType<typeof sendCustodialUsdcTransfer>>;
+
+  try {
+    transfer = await sendCustodialUsdcTransfer({
+      payerSecretKey: decryptWalletSecret(payerProfile.encrypted_wallet_secret),
+      request: {
+        senderWalletAddress: payerProfile.wallet_address,
+        recipientWalletAddress: requesterProfile.wallet_address,
+        amount: String(paymentIntent.amount),
+      },
+    });
+  } catch (settlementError) {
+    return NextResponse.json(
+      {
+        error:
+          settlementError instanceof Error
+            ? settlementError.message
+            : "Could not send the devnet USDC transaction.",
+      },
+      { status: 502 },
+    );
+  }
+
+  const timestamp = new Date().toISOString();
   const { data: updatedPaymentIntent, error: updateError } = await supabase
     .from("payment_intents")
     .update({
-      status: "approved",
+      status: "settled",
       approval_otp: null,
-      approved_at: new Date().toISOString(),
+      approved_at: timestamp,
       approved_by_profile_id: activeProfileId,
       approval_method: approvalMethod,
+      transaction_signature: transfer.signature,
+      settled_at: timestamp,
     })
     .eq("id", intentId)
     .select(
@@ -126,15 +175,34 @@ export async function POST(
     );
   }
 
+  const { error: transactionError } = await supabase.from("transactions").upsert(
+    {
+      payment_intent_id: intentId,
+      signature: transfer.signature,
+      token_mint: DEVNET_USDC_MINT.toBase58(),
+      sender_wallet: payerProfile.wallet_address,
+      recipient_wallet: requesterProfile.wallet_address,
+      status: "confirmed",
+    },
+    {
+      onConflict: "payment_intent_id",
+    },
+  );
+
+  if (transactionError) {
+    return NextResponse.json({ error: transactionError.message }, { status: 500 });
+  }
+
   return NextResponse.json({
     ok: true,
     message:
       approvalMethod === "payer_link"
-        ? "OTP verified. Sign and send the USDC transfer next."
-        : "OTP verified. The payer still needs to open OTPay and sign before settlement.",
+        ? "OTP verified. Devnet USDC payment settled."
+        : "OTP verified. Devnet USDC payment settled from the payer test wallet.",
     data: {
       paymentIntent: updatedPaymentIntent,
-      canSettle: approvalMethod === "payer_link",
+      transactionSignature: transfer.signature,
+      canSettle: false,
     },
   });
 }
