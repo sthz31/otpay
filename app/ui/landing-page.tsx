@@ -1,17 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import {
-  FormEvent,
-  startTransition,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import Link from "next/link";
+import { useLayoutEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const steps = [
   {
@@ -68,388 +61,31 @@ const reasons = [
   },
 ];
 
-type WaitlistFormProps = {
-  formId: string;
-  note: string;
-  submitLabel: string;
-};
-
-type FormErrors = {
-  email?: string;
-  phone?: string;
-  form?: string;
-};
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const waitlistTable = process.env.NEXT_PUBLIC_SUPABASE_WAITLIST_TABLE ?? "waitlist";
-
-let supabaseClient: SupabaseClient | null = null;
-
-function getSupabaseClient() {
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return null;
-  }
-
-  if (!supabaseClient) {
-    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-  }
-
-  return supabaseClient;
-}
-
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function isValidPhone(value: string) {
-  return /^\+?[0-9\s\-()]{7,20}$/.test(value);
-}
-
-function WaitlistForm({
-  formId,
-  note,
-  submitLabel,
-  onSuccess,
-}: WaitlistFormProps & { onSuccess?: () => void }) {
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [errors, setErrors] = useState<FormErrors>({});
-  const [status, setStatus] = useState<"idle" | "submitting" | "success">("idle");
-
-  const emailRef = useRef<HTMLInputElement>(null);
-  const phoneRef = useRef<HTMLInputElement>(null);
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const nextErrors: FormErrors = {};
-    const trimmedEmail = email.trim();
-    const trimmedPhone = phone.trim();
-
-    if (!trimmedEmail) {
-      nextErrors.email = "Email is required.";
-    } else if (!isValidEmail(trimmedEmail)) {
-      nextErrors.email = "Enter a valid email address.";
-    }
-
-    if (!trimmedPhone) {
-      nextErrors.phone = "Phone number is required.";
-    } else if (!isValidPhone(trimmedPhone)) {
-      nextErrors.phone = "Enter a valid phone number.";
-    }
-
-    setErrors(nextErrors);
-
-    if (nextErrors.email) {
-      emailRef.current?.focus();
-      return;
-    }
-
-    if (nextErrors.phone) {
-      phoneRef.current?.focus();
-      return;
-    }
-
-    setStatus("submitting");
-    setErrors({});
-
-    const client = getSupabaseClient();
-
-    if (!client) {
-      setErrors({
-        form: "Add Supabase env vars to enable the live waitlist.",
-      });
-      setStatus("idle");
-      return;
-    }
-
-    void (async () => {
-      const { error } = await client.from(waitlistTable).insert({
-        email: trimmedEmail,
-        phone: trimmedPhone,
-      });
-
-      if (error) {
-        setErrors({
-          form: "Could not join the waitlist right now. Please try again.",
-        });
-        setStatus("idle");
-        return;
-      }
-
-      window.dispatchEvent(new CustomEvent("otpay:waitlist-joined"));
-      onSuccess?.();
-
-      startTransition(() => {
-        setStatus("success");
-      });
-    })();
-  }
-
-  if (status === "success") {
-    return (
-      <div className="waitlist-success" role="status" aria-live="polite">
-        <p className="waitlist-success-kicker">Waitlist confirmed</p>
-        <h3>You&apos;re on the list.</h3>
-        <p>We&apos;ll reach out when OTPay opens access for early users and builders.</p>
-      </div>
-    );
-  }
-
+function LiveDevnetPanel() {
   return (
-    <form className="waitlist-form" onSubmit={handleSubmit} noValidate>
-      <fieldset className="waitlist-fieldset">
-        <legend className="sr-only">Join the OTPay waitlist</legend>
-        <div className="waitlist-grid">
-          <div className="waitlist-field">
-            <label htmlFor={`${formId}-email`}>Email *</label>
-            <input
-              ref={emailRef}
-              id={`${formId}-email`}
-              type="email"
-              autoComplete="email"
-              inputMode="email"
-              spellCheck={false}
-              placeholder="you@email.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              aria-invalid={errors.email ? "true" : "false"}
-              aria-describedby={errors.email ? `${formId}-email-error` : `${formId}-note`}
-            />
-            <p id={`${formId}-email-error`} className="field-error" aria-live="polite">
-              {errors.email ?? ""}
-            </p>
-          </div>
-          <div className="waitlist-field">
-            <label htmlFor={`${formId}-phone`}>Phone *</label>
-            <input
-              ref={phoneRef}
-              id={`${formId}-phone`}
-              type="tel"
-              autoComplete="tel"
-              inputMode="tel"
-              spellCheck={false}
-              placeholder="+1 98XX-XXX-XXX"
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
-              aria-invalid={errors.phone ? "true" : "false"}
-              aria-describedby={errors.phone ? `${formId}-phone-error` : `${formId}-note`}
-            />
-            <p id={`${formId}-phone-error`} className="field-error" aria-live="polite">
-              {errors.phone ?? ""}
-            </p>
-          </div>
+    <div className="live-panel">
+      <div className="payment-preview">
+        <div className="payment-preview-card is-metric">
+          <p>Status</p>
+          <strong>Live</strong>
+          <span>OTPay is running on Solana devnet now</span>
         </div>
-      </fieldset>
-      <div className="waitlist-actions">
-        {errors.form ? (
-          <p className="field-error" aria-live="polite">
-            {errors.form}
-          </p>
-        ) : null}
-        <button
-          type="submit"
-          className="waitlist-button"
-          disabled={status === "submitting"}
-          aria-busy={status === "submitting"}
-        >
-          {status === "submitting" ? "Joining..." : submitLabel}
-        </button>
-        <p id={`${formId}-note`} className="waitlist-note">
-          {note}
-        </p>
       </div>
-    </form>
-  );
-}
 
-function WaitlistCount() {
-  const [count, setCount] = useState<number | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "unavailable">("loading");
-
-  useLayoutEffect(() => {
-    let isMounted = true;
-
-    async function loadCount() {
-      try {
-        const response = await fetch("/api/waitlist/count", {
-          method: "GET",
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to load waitlist count");
-        }
-
-        const data = (await response.json()) as { count?: number };
-
-        if (!isMounted) {
-          return;
-        }
-
-        setCount(typeof data.count === "number" ? data.count : 0);
-        setStatus("ready");
-      } catch {
-        if (!isMounted) {
-          return;
-        }
-
-        setStatus("unavailable");
-      }
-    }
-
-    void loadCount();
-
-    const handleJoined = () => {
-      setCount((current) => (typeof current === "number" ? current + 1 : current));
-      setStatus("ready");
-    };
-
-    window.addEventListener("otpay:waitlist-joined", handleJoined);
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener("otpay:waitlist-joined", handleJoined);
-    };
-  }, []);
-
-  return (
-    <div className="payment-preview-card is-metric">
-      <p>Waitlist</p>
-      <strong>{status === "ready" ? count?.toLocaleString() : "Live soon"}</strong>
-      <span>
-        {status === "ready"
-          ? "People already signed up"
-          : "Connect Supabase to show the live count"}
-      </span>
-    </div>
-  );
-}
-
-function CelebrationModal({
-  isOpen,
-  onClose,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-}) {
-  const modalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen, onClose]);
-
-  useLayoutEffect(() => {
-    if (!isOpen || !modalRef.current) {
-      return;
-    }
-
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    if (reduceMotion) {
-      return;
-    }
-
-    const context = gsap.context(() => {
-      gsap.from(".js-celebration-backdrop", {
-        autoAlpha: 0,
-        duration: 0.18,
-        ease: "power2.out",
-      });
-
-      gsap.from(".js-celebration-modal", {
-        y: 24,
-        scale: 0.96,
-        autoAlpha: 0,
-        duration: 0.28,
-        ease: "power2.out",
-      });
-
-      gsap.from(".js-confetti", {
-        y: -10,
-        autoAlpha: 0,
-        scale: 0.8,
-        stagger: 0.04,
-        duration: 0.24,
-        ease: "back.out(1.6)",
-      });
-    }, modalRef);
-
-    return () => {
-      context.revert();
-    };
-  }, [isOpen]);
-
-  if (!isOpen) {
-    return null;
-  }
-
-  const shareText = encodeURIComponent(
-    "I just joined the @otpay1 waitlist for phone-number-native payments on Solana. Early believers might even catch the token if one ever drops.",
-  );
-
-  return (
-    <div
-      ref={modalRef}
-      className="celebration-backdrop js-celebration-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="celebration-title"
-      onClick={onClose}
-    >
-      <div className="celebration-modal js-celebration-modal" onClick={(event) => event.stopPropagation()}>
-        <button
-          type="button"
-          className="celebration-close"
-          aria-label="Close celebration popup"
-          onClick={onClose}
-        >
-          Close
-        </button>
-        <div className="celebration-burst" aria-hidden="true">
-          <span className="confetti-chip js-confetti">+1</span>
-          <span className="confetti-chip js-confetti">SOL</span>
-          <span className="confetti-chip js-confetti">OTP</span>
-          <span className="confetti-chip js-confetti">X</span>
-        </div>
-        <p className="celebration-kicker">You made the list</p>
-        <h3 id="celebration-title">You might be early enough for the token story.</h3>
-        <p className="celebration-copy">
-          Thanks for joining OTPay. If we ever launch a community token, early believers
-          like you should be closest to the front of the line.
+      <div className="waitlist-success live-card">
+        <p className="waitlist-success-kicker">Devnet access open</p>
+        <h3>Use OTPay today.</h3>
+        <p>
+          Create a phone-linked wallet, load demo USDC, and send payment requests on devnet.
+          Devnet users will be considered for early benefits when OTPay goes live on mainnet.
         </p>
-        <div className="celebration-actions">
-          <a
-            className="celebration-share"
-            href={`https://x.com/intent/tweet?text=${shareText}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Share on X
-          </a>
-          <a
-            className="celebration-follow"
-            href="https://x.com/otpay1"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Follow @otpay1
-          </a>
+        <div className="live-actions">
+          <Link className="waitlist-button" href="/link-phone">
+            Start on devnet
+          </Link>
+          <Link className="hero-secondary-link" href="/login">
+            Log in
+          </Link>
         </div>
       </div>
     </div>
@@ -458,7 +94,6 @@ function CelebrationModal({
 
 export function LandingPage() {
   const rootRef = useRef<HTMLElement>(null);
-  const [celebrationOpen, setCelebrationOpen] = useState(false);
 
   useLayoutEffect(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -522,17 +157,15 @@ export function LandingPage() {
         </a>
         <div className="nav-meta">
           <span className="nav-pill">Built on Solana</span>
-          <a className="nav-link" href="#waitlist">
-            Join waitlist
+          <a className="nav-link" href="#devnet">
+            Live on devnet
           </a>
-          <a
+          <Link
             className="nav-link nav-social"
-            href="https://x.com/otpay1"
-            target="_blank"
-            rel="noreferrer"
+            href="/link-phone"
           >
-            X @otpay1
-          </a>
+            Start
+          </Link>
         </div>
       </header>
 
@@ -554,25 +187,24 @@ export function LandingPage() {
             <span className="hero-chip">Stablecoin settlement</span>
             <span className="hero-chip">Fast, low-cost rails</span>
           </div>
+          <div className="hero-actions js-hero-copy">
+            <Link className="hero-primary-link" href="/link-phone">
+              Register phone number
+            </Link>
+            <a className="hero-secondary-link" href="#devnet">
+              Try devnet
+            </a>
+          </div>
         </div>
 
-        <div id="waitlist" className="hero-panel js-hero-panel">
+        <div id="devnet" className="hero-panel js-hero-panel">
           <div className="hero-orb js-orbit" aria-hidden="true" />
           <div className="panel-topline">
-            <span className="panel-badge">Early access</span>
+            <span className="panel-badge">Live on devnet</span>
             <span className="panel-mono">Solana rail.</span>
           </div>
 
-          <div className="payment-preview">
-            <WaitlistCount />
-          </div>
-
-          <WaitlistForm
-            formId="hero"
-            note="Early access · No spam · Unsubscribe anytime"
-            submitLabel="Join Waitlist"
-            onSuccess={() => setCelebrationOpen(true)}
-          />
+          <LiveDevnetPanel />
 
           <div className="hero-stat-row" aria-label="OTPay product model">
             <div className="hero-stat js-hero-stats">
@@ -645,20 +277,29 @@ export function LandingPage() {
 
       <section className="bottom-cta js-reveal">
         <div className="bottom-cta-copy">
-          <p className="section-kicker">Get in early</p>
-          <h2>Be first to try it.</h2>
+          <p className="section-kicker">Live now</p>
+          <h2>Start using OTPay on devnet.</h2>
           <p>
-            We&apos;re opening access to early builders, operators, and users who want
-            to test phone-number-native payments on Solana before the public launch.
+            Create your phone-linked wallet, load demo funds, and run the full OTP flow today.
+            Devnet users will be considered for early benefits when OTPay launches on mainnet.
           </p>
         </div>
         <div className="bottom-cta-panel">
-          <WaitlistForm
-            formId="footer"
-            note="Join the first OTPay waitlist"
-            submitLabel="Reserve Spot"
-            onSuccess={() => setCelebrationOpen(true)}
-          />
+          <div className="waitlist-success live-card">
+            <p className="waitlist-success-kicker">Devnet is open</p>
+            <h3>OTPay is open for devnet testing.</h3>
+            <p>
+              Try the payment flow now. Mainnet benefits will prioritize people who helped test early.
+            </p>
+            <div className="live-actions">
+              <Link className="waitlist-button" href="/link-phone">
+                Start on devnet
+              </Link>
+              <Link className="hero-secondary-link" href="/login">
+                Log in
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -679,7 +320,6 @@ export function LandingPage() {
           Follow @otpay1 on X
         </a>
       </footer>
-      <CelebrationModal isOpen={celebrationOpen} onClose={() => setCelebrationOpen(false)} />
     </main>
   );
 }

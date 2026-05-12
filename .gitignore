@@ -40,5 +40,24 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Ignore all markdown files
+*.md
+
+# Ignore logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Ignore Mac system files
+.DS_Store
+
+# Ignore VSCode settings
+.vscode/
+
 CLAUDE.md
 AGENTS.md
+otpay-mvp-idea.md
+
+supabase/
+.claude/
