@@ -25,7 +25,7 @@ type DashboardShellProps = {
   balances: WalletBalances;
   recentIntents: PaymentIntentSummary[];
   outstandingIncoming: PaymentIntentSummary[];
-  view?: "wallet" | "requests" | "activity";
+  view?: "wallet" | "requests" | "activity" | "profile";
 };
 
 type TopUpResponse = {
@@ -52,6 +52,7 @@ type IconName =
   | "menu"
   | "plus"
   | "shield"
+  | "user"
   | "wallet"
   | "x";
 
@@ -60,6 +61,7 @@ const navigation = [
   { label: "Pay requests", href: "/requests", icon: "shield" },
   { label: "Request", href: "/request-payment", icon: "plus" },
   { label: "Activity", href: "/activity", icon: "activity" },
+  { label: "Profile", href: "/profile", icon: "user" },
 ] satisfies { label: string; href: string; icon: IconName }[];
 
 const primaryButtonClassName =
@@ -118,6 +120,7 @@ function useActiveNavLabel() {
   if (pathname === "/request-payment") return "Request";
   if (pathname === "/requests") return "Pay requests";
   if (pathname === "/activity") return "Activity";
+  if (pathname === "/profile") return "Profile";
   return "Wallet";
 }
 
@@ -189,6 +192,10 @@ export function DashboardShell({
 
             {view === "activity" ? (
               <RecentActivitySection profileId={profile.id} intents={recentIntents} flushTop />
+            ) : null}
+
+            {view === "profile" ? (
+              <ProfileSettings profile={profile} />
             ) : null}
           </div>
         </main>
@@ -602,6 +609,188 @@ function AddressRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ProfileSettings({ profile }: { profile: ProfileSummary }) {
+  const router = useRouter();
+  const [displayName, setDisplayName] = useState(profile.display_name);
+  const [otpayTag, setOtpayTag] = useState(profile.otpay_tag ? `@${profile.otpay_tag}` : "");
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch("/api/profile", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          currentPin: currentPin || undefined,
+          displayName,
+          newPin: newPin || undefined,
+          otpayTag,
+        }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Could not update profile.");
+      }
+
+      setCurrentPin("");
+      setNewPin("");
+      setSuccess(payload.message ?? "Profile updated.");
+      router.refresh();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Could not update profile.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-[32px] border border-white/70 bg-white/84 p-5 shadow-[0_24px_80px_rgba(8,17,9,0.08)] sm:p-6"
+      >
+        <div>
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            Profile
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground)]">
+            Edit account
+          </h1>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
+            Update your visible name, OTPay tag, or change the 4-digit PIN used to open this test
+            wallet.
+          </p>
+        </div>
+
+        <div className="mt-6 grid gap-4">
+          <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">
+            Display name
+            <input
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+              placeholder="Fresh Requester"
+              autoComplete="name"
+              required
+            />
+          </label>
+
+          <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">
+            OTPay tag
+            <input
+              value={otpayTag}
+              onChange={(event) => setOtpayTag(event.target.value)}
+              className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+              placeholder="@freshpayer"
+              autoCapitalize="none"
+              autoComplete="off"
+              spellCheck={false}
+              required
+            />
+            <span className="text-xs font-medium leading-5 text-[var(--muted)]">
+              Use 3-30 letters, numbers, or underscores. People can request you with this tag.
+            </span>
+          </label>
+
+          <div className="grid gap-4 rounded-[26px] border border-black/10 bg-[rgba(245,255,244,0.7)] p-4 sm:grid-cols-2">
+            <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">
+              Current PIN
+              <input
+                value={currentPin}
+                onChange={(event) => setCurrentPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="1234"
+                type="password"
+                autoComplete="current-password"
+              />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">
+              New PIN
+              <input
+                value={newPin}
+                onChange={(event) => setNewPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                className="min-h-12 rounded-2xl border border-black/10 bg-white px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="4321"
+                type="password"
+                autoComplete="new-password"
+              />
+            </label>
+          </div>
+        </div>
+
+        {error ? (
+          <p className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {error}
+          </p>
+        ) : null}
+
+        {success ? (
+          <p className="mt-5 rounded-2xl border border-[rgba(0,214,79,0.28)] bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--foreground)]">
+            {success}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <button type="submit" disabled={saving} aria-busy={saving} className={primaryButtonClassName}>
+            {saving ? "Saving..." : "Save profile"}
+          </button>
+          <Link href="/dashboard" className={secondaryButtonClassName}>
+            Back to wallet
+          </Link>
+        </div>
+      </form>
+
+      <aside className="grid gap-4">
+        <div className="rounded-[32px] border border-white/70 bg-white/84 p-5 shadow-[0_24px_80px_rgba(8,17,9,0.08)] sm:p-6">
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            Account
+          </p>
+          <div className="mt-4 flex items-center gap-3">
+            <div
+              className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-sm font-extrabold text-[var(--foreground)]"
+              aria-hidden="true"
+            >
+              {initials(profile.display_name)}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-[var(--foreground)]">
+                {profile.display_name}
+              </p>
+              <p className="truncate font-mono text-xs text-[var(--muted)]">
+                {profile.otpay_tag ? `@${profile.otpay_tag}` : "No tag yet"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {profile.phone_number ? <AddressRow label="Phone" value={profile.phone_number} /> : null}
+            <AddressRow label="Wallet address" value={profile.wallet_address} />
+          </div>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
 function PendingPaymentsSection({
   requests,
   profileId,
@@ -959,11 +1148,13 @@ function TopBar({
 }) {
   const titleByView = {
     activity: "Activity history",
+    profile: "Profile settings",
     requests: "Pay requests",
     wallet: `Wallet for ${profileName}`,
   } satisfies Record<NonNullable<DashboardShellProps["view"]>, string>;
   const helperByView = {
     activity: "Track requests, approvals, and devnet settlement.",
+    profile: "Edit your name, OTPay tag, and PIN.",
     requests: pendingCount
       ? `${pendingCount} payment request${pendingCount === 1 ? "" : "s"} waiting`
       : "No payments waiting",
@@ -1096,6 +1287,12 @@ function Icon({ name }: { name: IconName }) {
         <>
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
           <path d="m9 12 2 2 4-5" />
+        </>
+      ) : null}
+      {name === "user" ? (
+        <>
+          <path d="M20 21a8 8 0 0 0-16 0" />
+          <circle cx="12" cy="7" r="4" />
         </>
       ) : null}
       {name === "wallet" ? (

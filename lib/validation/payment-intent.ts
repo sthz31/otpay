@@ -21,6 +21,20 @@ export const phoneLinkPinSchema = z.object({
   pin: z.string().regex(/^\d{4}$/, "PIN must be exactly 4 digits."),
 });
 
+export const profileUpdateSchema = z.object({
+  displayName: z.string().trim().min(2, "Display name is required.").max(40, "Display name is too long.").optional(),
+  otpayTag: z
+    .string()
+    .trim()
+    .regex(/^@?[a-zA-Z0-9][a-zA-Z0-9_]{2,29}$/, "Use 3-30 letters, numbers, or underscores.")
+    .optional(),
+  currentPin: z.string().regex(/^\d{4}$/, "Current PIN must be exactly 4 digits.").optional(),
+  newPin: z.string().regex(/^\d{4}$/, "New PIN must be exactly 4 digits.").optional(),
+}).refine((value) => !value.newPin || value.currentPin, {
+  message: "Enter your current PIN to change PIN.",
+  path: ["currentPin"],
+});
+
 export const loginSchema = z.object({
   phoneNumber: z
     .string()

@@ -12,13 +12,14 @@ type RequestPaymentShellProps = {
   children: React.ReactNode;
 };
 
-type IconName = "activity" | "menu" | "plus" | "shield" | "wallet" | "x";
+type IconName = "activity" | "menu" | "plus" | "shield" | "user" | "wallet" | "x";
 
 const navigation = [
   { label: "Wallet", href: "/dashboard", icon: "wallet" },
   { label: "Pay requests", href: "/requests", icon: "shield" },
   { label: "Request", href: "/request-payment", icon: "plus" },
   { label: "Activity", href: "/activity", icon: "activity" },
+  { label: "Profile", href: "/profile", icon: "user" },
 ] satisfies { label: string; href: string; icon: IconName }[];
 
 function initials(name: string) {
@@ -36,6 +37,7 @@ function useActiveNavLabel() {
   if (pathname === "/request-payment") return "Request";
   if (pathname === "/requests") return "Pay requests";
   if (pathname === "/activity") return "Activity";
+  if (pathname === "/profile") return "Profile";
   return "Wallet";
 }
 
@@ -324,6 +326,12 @@ function Icon({ name }: { name: IconName }) {
       ) : null}
       {name === "shield" ? (
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+      ) : null}
+      {name === "user" ? (
+        <>
+          <path d="M20 21a8 8 0 0 0-16 0" />
+          <circle cx="12" cy="7" r="4" />
+        </>
       ) : null}
       {name === "wallet" ? (
         <>
