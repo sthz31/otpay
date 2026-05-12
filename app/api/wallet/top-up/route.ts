@@ -3,8 +3,8 @@ import { z } from "zod";
 import { getActiveProfileId } from "@/lib/auth/session-server";
 import {
   DEMO_TOP_UP_SOL_AMOUNT,
-  airdropDevnetSol,
   getDevnetWalletBalances,
+  sendTreasurySolTopUp,
   sendTreasuryUsdcTopUp,
 } from "@/lib/solana/usdc";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -109,17 +109,18 @@ export async function POST(request: Request) {
 
   try {
     try {
-      solSignature = await airdropDevnetSol({
-        walletAddress: profile.wallet_address,
+      const solTransfer = await sendTreasurySolTopUp({
+        recipientWalletAddress: profile.wallet_address,
         solAmount: DEMO_TOP_UP_SOL_AMOUNT,
       });
-    } catch (airdropError) {
+      solSignature = solTransfer.signature;
+    } catch (solTransferError) {
       solError =
-        airdropError instanceof Error
-          ? airdropError.message
-          : "Devnet faucet is temporarily unavailable.";
+        solTransferError instanceof Error
+          ? solTransferError.message
+          : "Could not fund gas from the demo treasury wallet.";
       console.warn(
-        `[OTPay demo top-up] SOL airdrop to ${profile.wallet_address} failed: ${solError}`,
+        `[OTPay demo top-up] Treasury SOL transfer to ${profile.wallet_address} failed: ${solError}`,
       );
     }
 

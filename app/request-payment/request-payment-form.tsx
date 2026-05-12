@@ -34,7 +34,7 @@ type RequestPaymentResponse = {
 };
 
 type FormState = {
-  recipientPhoneNumber: string;
+  payerIdentifier: string;
   amount: string;
   note: string;
 };
@@ -50,7 +50,7 @@ const inputClassName =
 
 export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
   const [form, setForm] = useState<FormState>({
-    recipientPhoneNumber: "",
+    payerIdentifier: "",
     amount: "",
     note: "",
   });
@@ -102,7 +102,7 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          recipientPhoneNumber: form.recipientPhoneNumber,
+          payerIdentifier: form.payerIdentifier,
           amount: form.amount,
           currency: "USDC",
           note: form.note,
@@ -132,7 +132,7 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
     setSubmitting(false);
     setForm((current) => ({
       ...current,
-      recipientPhoneNumber: "",
+      payerIdentifier: "",
       amount: "",
       note: "",
     }));
@@ -194,14 +194,20 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
         Request USDC
       </h1>
       <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--muted)]">
-        Enter the payer phone number and amount. OTPay logs a demo OTP, then a correct OTP sends USDC on devnet.
+        Enter the payer OTPay tag and amount. Phone numbers still work as a fallback.
       </p>
 
       <form className="mt-8 grid gap-4" onSubmit={handleSubmit}>
         <div className="rounded-[26px] border border-black/10 bg-[rgba(245,255,244,0.72)] px-5 py-4 text-sm text-[var(--muted)]">
           <p className="font-semibold text-[var(--foreground)]">Sending as</p>
           <p className="mt-2">
-            {activeProfile.display_name} ·{" "}
+            {activeProfile.display_name}{" "}
+            {activeProfile.otpay_tag ? (
+              <>
+                · <span className="font-mono">@{activeProfile.otpay_tag}</span>
+              </>
+            ) : null}{" "}
+            ·{" "}
             <span className="font-mono">{activeProfile.phone_number ?? "No phone linked"}</span>
           </p>
           <p className="mt-1 min-w-0 truncate">
@@ -210,23 +216,25 @@ export function RequestPaymentForm({ activeProfile }: RequestPaymentFormProps) {
         </div>
 
         <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">
-          Payer phone number
+          Payer OTPay tag
           <input
             className={inputClassName}
-            value={form.recipientPhoneNumber}
+            value={form.payerIdentifier}
             onChange={(event) =>
               setForm((current) => ({
                 ...current,
-                recipientPhoneNumber: event.target.value,
+                payerIdentifier: event.target.value,
               }))
             }
-            placeholder="+977 98XXXXXXXX"
-            type="tel"
-            autoComplete="tel"
-            inputMode="tel"
+            placeholder="@freshpayer or +977 98XXXXXXXX"
+            type="text"
+            autoComplete="off"
             spellCheck={false}
             required
           />
+          <span className="text-xs font-medium text-[var(--muted)]">
+            Tags are primary. Use phone only when you do not know the payer&apos;s tag.
+          </span>
         </label>
 
         <label className="grid gap-2 text-sm font-semibold text-[var(--foreground)]">

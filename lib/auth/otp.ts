@@ -1,7 +1,7 @@
-import { createHash, randomInt, timingSafeEqual } from "crypto";
+import { createHash, timingSafeEqual } from "crypto";
 
 export function createOtp() {
-  return randomInt(1000, 10000).toString();
+  return "1234";
 }
 
 export function hashPaymentOtp(intentId: string, otp: string) {

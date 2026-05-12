@@ -541,6 +541,38 @@ a:focus-visible {
   line-height: 1.65;
 }
 
+.live-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 18px;
+}
+
+.live-card {
+  min-height: auto;
+}
+
+.live-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.live-actions .waitlist-button,
+.live-actions .hero-secondary-link {
+  width: fit-content;
+  text-decoration: none;
+}
+
+.live-actions .waitlist-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 22px;
+}
+
 .hero-stat-row {
   position: relative;
   z-index: 1;

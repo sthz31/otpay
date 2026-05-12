@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { createOtp, hashPaymentOtp } from "@/lib/auth/otp";
 import { getActiveProfileId } from "@/lib/auth/session-server";
+import { isOtpayTagInput, normalizeOtpayTag } from "@/lib/otpay-tags";
 import { sendPaymentOtpSms } from "@/lib/sms/twilio";
 import {
   MIN_SOL_FOR_USDC_TRANSFER,
@@ -54,28 +55,77 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Requester profile not found." }, { status: 404 });
   }
 
-  const normalizedPhoneNumber = parsed.data.recipientPhoneNumber.trim();
-  const { data: payerPhoneLink, error: payerLookupError } = await supabase
-    .from("phone_links")
-    .select("profile_id, phone_number, is_verified")
-    .eq("phone_number", normalizedPhoneNumber)
-    .eq("is_verified", true)
-    .maybeSingle();
+  const payerIdentifier = (
+    parsed.data.payerIdentifier ??
+    parsed.data.recipientPhoneNumber ??
+    ""
+  ).trim();
+  const isPhoneIdentifier = /^\+?[0-9\s\-()]{7,20}$/.test(payerIdentifier);
+  const normalizedTag = normalizeOtpayTag(payerIdentifier);
 
-  if (payerLookupError) {
-    return NextResponse.json({ error: payerLookupError.message }, { status: 500 });
+  let payerPhoneLink:
+    | { profile_id: string; phone_number: string; is_verified: boolean }
+    | null = null;
+
+  if (isPhoneIdentifier) {
+    const { data, error: payerLookupError } = await supabase
+      .from("phone_links")
+      .select("profile_id, phone_number, is_verified")
+      .eq("phone_number", payerIdentifier)
+      .eq("is_verified", true)
+      .maybeSingle();
+
+    if (payerLookupError) {
+      return NextResponse.json({ error: payerLookupError.message }, { status: 500 });
+    }
+
+    payerPhoneLink = data;
+  } else if (isOtpayTagInput(payerIdentifier)) {
+    const { data: tagProfile, error: tagProfileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("otpay_tag", normalizedTag)
+      .maybeSingle();
+
+    if (tagProfileError) {
+      return NextResponse.json({ error: tagProfileError.message }, { status: 500 });
+    }
+
+    if (tagProfile) {
+      const { data, error: phoneLinkError } = await supabase
+        .from("phone_links")
+        .select("profile_id, phone_number, is_verified")
+        .eq("profile_id", tagProfile.id)
+        .eq("is_verified", true)
+        .maybeSingle();
+
+      if (phoneLinkError) {
+        return NextResponse.json({ error: phoneLinkError.message }, { status: 500 });
+      }
+
+      payerPhoneLink = data;
+    }
+  } else {
+    return NextResponse.json(
+      { error: "Enter a valid OTPay tag like @freshpayer or a phone number." },
+      { status: 400 },
+    );
   }
 
   if (!payerPhoneLink) {
     return NextResponse.json(
-      { error: "Payer phone number is not registered in OTPay yet." },
+      {
+        error: isPhoneIdentifier
+          ? "Payer phone number is not registered in OTPay yet."
+          : `OTPay tag @${normalizedTag} is not registered yet.`,
+      },
       { status: 404 },
     );
   }
 
   if (payerPhoneLink.profile_id === activeProfileId) {
     return NextResponse.json(
-      { error: "Choose a different phone number for the payer." },
+      { error: "Choose a different OTPay tag or phone number for the payer." },
       { status: 400 },
     );
   }

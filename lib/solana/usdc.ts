@@ -3,6 +3,7 @@ import {
   Keypair,
   PublicKey,
   SendTransactionError,
+  SystemProgram,
   Transaction,
 } from "@solana/web3.js";
 import {
@@ -29,6 +30,7 @@ export type SettlementRequest = {
 const USDC_DECIMALS = 6;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const FEE_BUFFER_LAMPORTS = 10_000;
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 export const MIN_SOL_FOR_USDC_TRANSFER = 0.003;
 export const DEMO_TOP_UP_SOL_AMOUNT = 0.05;
@@ -214,14 +216,98 @@ export async function sendCustodialUsdcTransfer({
   };
 }
 
-function getKeypairFromBase64Secret(secretKey: string) {
-  const bytes = Buffer.from(secretKey, "base64");
+function normalizeTreasurySecret(secretKey: string) {
+  const trimmed = secretKey.trim();
 
-  if (bytes.length !== 64) {
-    throw new Error("OTPAY_DEVNET_TREASURY_SECRET_KEY must be a base64 encoded 64-byte Solana secret key.");
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
   }
 
-  return Keypair.fromSecretKey(bytes);
+  return trimmed;
+}
+
+function parseTreasurySecretBytes(secretKey: string) {
+  const normalized = normalizeTreasurySecret(secretKey);
+
+  if (normalized.startsWith("[") || normalized.includes(",")) {
+    let values: unknown;
+
+    try {
+      values = normalized.startsWith("[")
+        ? JSON.parse(normalized)
+        : normalized.split(",").map((value) => Number(value.trim()));
+    } catch {
+      throw new Error(
+        "OTPAY_DEVNET_TREASURY_SECRET_KEY looks like a Solana JSON keypair, but it could not be parsed.",
+      );
+    }
+
+    if (
+      !Array.isArray(values) ||
+      values.length !== 64 ||
+      !values.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)
+    ) {
+      throw new Error(
+        "OTPAY_DEVNET_TREASURY_SECRET_KEY JSON/comma format must contain exactly 64 byte values.",
+      );
+    }
+
+    return Uint8Array.from(values as number[]);
+  }
+
+  const bytes = Buffer.from(normalized, "base64");
+
+  if (bytes.length === 64) {
+    return bytes;
+  }
+
+  const base58Bytes = decodeBase58Secret(normalized);
+
+  if (base58Bytes?.length === 64) {
+    return base58Bytes;
+  }
+
+  throw new Error(
+    "OTPAY_DEVNET_TREASURY_SECRET_KEY must be a 64-byte Solana secret key in base64, base58, JSON array, or comma-separated format.",
+  );
+}
+
+function getKeypairFromSecret(secretKey: string) {
+  return Keypair.fromSecretKey(parseTreasurySecretBytes(secretKey));
+}
+
+function decodeBase58Secret(value: string) {
+  if (!value || [...value].some((char) => !BASE58_ALPHABET.includes(char))) {
+    return null;
+  }
+
+  const bytes = [0];
+
+  for (const char of value) {
+    const alphabetIndex = BASE58_ALPHABET.indexOf(char);
+    let carry = alphabetIndex;
+
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+
+  for (const char of value) {
+    if (char !== "1") break;
+    bytes.push(0);
+  }
+
+  return Uint8Array.from(bytes.reverse());
 }
 
 export function getDevnetTreasuryKeypair() {
@@ -231,7 +317,7 @@ export function getDevnetTreasuryKeypair() {
     throw new Error("Demo treasury wallet is not configured. Set OTPAY_DEVNET_TREASURY_SECRET_KEY.");
   }
 
-  return getKeypairFromBase64Secret(secretKey);
+  return getKeypairFromSecret(secretKey);
 }
 
 export async function airdropDevnetSol({
@@ -271,6 +357,76 @@ export async function airdropDevnetSol({
         : `Devnet faucet is temporarily unavailable: ${message}`,
     );
   }
+}
+
+export async function sendTreasurySolTopUp({
+  recipientWalletAddress,
+  solAmount,
+}: {
+  recipientWalletAddress: string;
+  solAmount: number;
+}) {
+  const treasuryKeypair = getDevnetTreasuryKeypair();
+  const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+  const treasury = treasuryKeypair.publicKey;
+  const recipient = new PublicKey(recipientWalletAddress);
+  const lamports = Math.round(solAmount * LAMPORTS_PER_SOL);
+  const treasuryLamports = await connection.getBalance(treasury);
+
+  if (treasuryLamports < lamports + FEE_BUFFER_LAMPORTS) {
+    throw new Error(
+      `Demo treasury wallet ${treasury.toBase58()} needs at least ${solAmount} SOL plus fees to fund wallet gas.`,
+    );
+  }
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const transaction = new Transaction({
+    feePayer: treasury,
+    recentBlockhash: blockhash,
+  }).add(
+    SystemProgram.transfer({
+      fromPubkey: treasury,
+      toPubkey: recipient,
+      lamports,
+    }),
+  );
+
+  transaction.sign(treasuryKeypair);
+
+  let signature: string;
+
+  try {
+    signature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+    });
+  } catch (error) {
+    if (error instanceof SendTransactionError) {
+      const logs = await error.getLogs(connection).catch(() => null);
+      throw new Error(
+        `${error.message}${logs?.length ? ` Logs: ${logs.join(" | ")}` : ""}`,
+      );
+    }
+
+    throw error;
+  }
+
+  const confirmation = await connection.confirmTransaction(
+    {
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    },
+    "confirmed",
+  );
+
+  if (confirmation.value.err) {
+    throw new Error(`Demo SOL top-up failed: ${JSON.stringify(confirmation.value.err)}`);
+  }
+
+  return {
+    signature,
+    treasuryWalletAddress: treasury.toBase58(),
+  };
 }
 
 export async function sendTreasuryUsdcTopUp({

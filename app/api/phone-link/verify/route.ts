@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, display_name, wallet_address")
+    .select("id, display_name, otpay_tag, wallet_address")
     .eq("id", updatedPhoneLink.profile_id)
     .single();
 

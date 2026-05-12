@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       pin_set_at: new Date().toISOString(),
     })
     .eq("id", parsed.data.profileId)
-    .select("id, display_name, wallet_address, pin_set_at")
+    .select("id, display_name, otpay_tag, wallet_address, pin_set_at")
     .single();
 
   if (profileError || !profile) {

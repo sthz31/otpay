@@ -289,7 +289,7 @@ function ProfileBlock({ profile }: { profile: ProfileSummary }) {
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-[var(--foreground)]">{profile.display_name}</p>
           <p className="truncate font-mono text-xs text-[var(--muted)]">
-            {profile.phone_number ?? "No phone linked"}
+            {profile.otpay_tag ? `@${profile.otpay_tag}` : profile.phone_number ?? "No phone linked"}
           </p>
         </div>
       </div>

@@ -463,8 +463,8 @@ function WalletHero({
                   </p>
                   {topUpResult.solError ? (
                     <p className="mt-3 rounded-2xl border border-[#f6e58d]/40 bg-[#fff8c8]/70 px-4 py-3 text-sm font-semibold text-[#5c4d00]">
-                      USDC loaded, but the devnet SOL faucet failed. Try Load USDC from card again
-                      later or airdrop SOL manually before paying requests.
+                      USDC loaded, but treasury SOL funding failed. Add SOL to the treasury wallet
+                      and try Load USDC from card again before paying requests.
                     </p>
                   ) : null}
                   <div className="mt-3 grid gap-2">
@@ -485,7 +485,7 @@ function WalletHero({
                         rel="noreferrer"
                         className="break-all font-mono text-xs font-semibold underline decoration-lime-700/40 underline-offset-4"
                       >
-                        SOL airdrop: {topUpResult.solSignature}
+                        SOL gas transfer: {topUpResult.solSignature}
                       </a>
                     ) : null}
                   </div>
@@ -555,6 +555,7 @@ function WalletDetailsCard({
       </div>
 
       <div className="mt-5 grid gap-3">
+        {profile.otpay_tag ? <AddressRow label="OTPay tag" value={`@${profile.otpay_tag}`} /> : null}
         <AddressRow label="Wallet address" value={profile.wallet_address} />
         <AddressRow label="USDC token account" value={balances.usdcAta} />
       </div>
@@ -1042,7 +1043,7 @@ function ProfileBlock({ profile }: { profile: ProfileSummary }) {
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-[var(--foreground)]">{profile.display_name}</p>
           <p className="truncate font-mono text-xs text-[var(--muted)]">
-            {profile.phone_number ?? "No phone linked"}
+            {profile.otpay_tag ? `@${profile.otpay_tag}` : profile.phone_number ?? "No phone linked"}
           </p>
         </div>
       </div>

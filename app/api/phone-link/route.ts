@@ -1,8 +1,32 @@
 import { NextResponse } from "next/server";
 import { createOtp, hashPhoneOtp } from "@/lib/auth/otp";
+import { createOtpayTagCandidate } from "@/lib/otpay-tags";
 import { createEncryptedTestWallet } from "@/lib/solana/custodial-wallet";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { phoneLinkStartSchema } from "@/lib/validation/payment-intent";
+
+async function createUniqueOtpayTag(displayName: string) {
+  const supabase = getSupabaseServerClient();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const otpayTag = createOtpayTagCandidate(displayName);
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("otpay_tag", otpayTag)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data) {
+      return otpayTag;
+    }
+  }
+
+  throw new Error("Could not generate a unique OTPay tag.");
+}
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -75,7 +99,7 @@ export async function POST(request: Request) {
 
     const { data: existingProfile, error: existingProfileError } = await supabase
       .from("profiles")
-      .select("id, display_name, wallet_address, encrypted_wallet_secret")
+      .select("id, display_name, otpay_tag, wallet_address, encrypted_wallet_secret")
       .eq("id", existingPendingLink.profile_id)
       .single();
 
@@ -114,9 +138,10 @@ export async function POST(request: Request) {
         .update({
           wallet_address: testWallet.walletAddress,
           encrypted_wallet_secret: testWallet.encryptedWalletSecret,
+          otpay_tag: existingProfile.otpay_tag ?? (await createUniqueOtpayTag(existingProfile.display_name)),
         })
         .eq("id", existingProfile.id)
-        .select("id, display_name, wallet_address, encrypted_wallet_secret")
+        .select("id, display_name, otpay_tag, wallet_address, encrypted_wallet_secret")
         .single();
 
       if (updateError || !updatedProfile) {
@@ -144,6 +169,7 @@ export async function POST(request: Request) {
         profile: {
           id: pendingProfile.id,
           display_name: pendingProfile.display_name,
+          otpay_tag: pendingProfile.otpay_tag ?? null,
           wallet_address: pendingProfile.wallet_address,
         },
         phoneLink: existingPendingLink,
@@ -171,10 +197,11 @@ export async function POST(request: Request) {
     .from("profiles")
     .insert({
       display_name: parsed.data.displayName.trim(),
+      otpay_tag: await createUniqueOtpayTag(parsed.data.displayName),
       wallet_address: testWallet.walletAddress,
       encrypted_wallet_secret: testWallet.encryptedWalletSecret,
     })
-    .select("id, display_name, wallet_address")
+    .select("id, display_name, otpay_tag, wallet_address")
     .single();
 
   if (profileError || !profile) {

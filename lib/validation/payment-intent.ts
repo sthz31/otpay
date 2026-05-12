@@ -30,12 +30,18 @@ export const loginSchema = z.object({
 });
 
 export const paymentIntentSchema = z.object({
+  payerIdentifier: z.string().trim().min(3, "Enter an OTPay tag or phone number.").optional(),
   recipientPhoneNumber: z
     .string()
-    .regex(/^\+?[0-9\s\-()]{7,20}$/, "Enter a valid phone number."),
+    .trim()
+    .regex(/^\+?[0-9\s\-()]{7,20}$/, "Enter a valid phone number.")
+    .optional(),
   amount: z.string().min(1, "amount is required"),
   currency: z.literal("USDC").default("USDC"),
   note: z.string().max(160).optional(),
+}).refine((value) => value.payerIdentifier || value.recipientPhoneNumber, {
+  message: "Enter an OTPay tag or phone number.",
+  path: ["payerIdentifier"],
 });
 
 export const paymentIntentDecisionSchema = z.object({

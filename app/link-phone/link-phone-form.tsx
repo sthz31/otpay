@@ -12,6 +12,7 @@ type FormState = {
 type ProfilePayload = {
   id: string;
   display_name: string;
+  otpay_tag?: string | null;
   wallet_address: string;
   pin_set_at?: string | null;
 };
@@ -173,7 +174,7 @@ export function LinkPhoneForm() {
         Register a phone number
       </h1>
       <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-600">
-        OTPay will create your demo wallet automatically, verify your phone number,
+        OTPay will create your demo wallet and OTPay tag automatically, verify your phone number,
         then ask you to set a PIN for dashboard access.
       </p>
 
@@ -266,6 +267,11 @@ export function LinkPhoneForm() {
             <p className="mt-2">
               Set a 4-digit PIN so you can sign in to your OTPay dashboard later.
             </p>
+            {pendingProfile?.otpay_tag ? (
+              <p className="mt-3 font-mono text-xs font-semibold">
+                OTPay tag: @{pendingProfile.otpay_tag}
+              </p>
+            ) : null}
           </div>
 
           <label className="grid gap-2 text-sm font-semibold text-zinc-900">
@@ -322,6 +328,11 @@ export function LinkPhoneForm() {
           <p className="mt-1 font-mono text-xs text-lime-900/80">
             Phone: {currentPhoneNumber}
           </p>
+          {pendingProfile.otpay_tag ? (
+            <p className="mt-1 font-mono text-xs text-lime-900/80">
+              Tag: @{pendingProfile.otpay_tag}
+            </p>
+          ) : null}
           <p className="mt-1 font-mono text-xs text-lime-900/80">
             Auto wallet: {pendingProfile.wallet_address}
           </p>
