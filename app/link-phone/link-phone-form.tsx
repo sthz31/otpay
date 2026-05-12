@@ -278,6 +278,7 @@ export function LinkPhoneForm() {
             Create PIN
             <input
               className="min-h-13 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 font-mono text-base font-normal text-zinc-900 outline-none transition focus:border-lime-500"
+              type="password"
               value={pin}
               onChange={(event) => setPin(event.target.value)}
               placeholder="4 digits"
@@ -291,6 +292,7 @@ export function LinkPhoneForm() {
             Confirm PIN
             <input
               className="min-h-13 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 font-mono text-base font-normal text-zinc-900 outline-none transition focus:border-lime-500"
+              type="password"
               value={confirmPin}
               onChange={(event) => setConfirmPin(event.target.value)}
               placeholder="Repeat PIN"
