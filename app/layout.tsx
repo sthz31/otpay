@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PwaRegister } from "./pwa-register";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,6 +9,16 @@ export const metadata: Metadata = {
   },
   description:
     "OTPay lets you send, request, and approve stablecoin payments on Solana using a phone number instead of a wallet address.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "OTPay",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "OTPay",
+  },
+  formatDetection: {
+    telephone: false,
+  },
   icons: {
     icon: "/otpay.png",
     shortcut: "/otpay.png",
@@ -29,9 +40,13 @@ export default function RootLayout({
       <head>
         <link rel="icon" href="/otpay.png" type="image/png" />
         <link rel="apple-touch-icon" href="/otpay.png" />
-        <meta name="theme-color" content="#A3E16C" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="theme-color" content="#00d64f" />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <PwaRegister />
+        {children}
+      </body>
     </html>
   );
 }
