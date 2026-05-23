@@ -81,6 +81,7 @@ export function LoginForm() {
         <label className="grid gap-2 text-sm font-semibold text-zinc-900">
           PIN
           <input
+            type="password"
             className="min-h-13 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 font-mono text-base font-normal text-zinc-900 outline-none transition focus:border-lime-500"
             value={pin}
             onChange={(event) => setPin(event.target.value)}
